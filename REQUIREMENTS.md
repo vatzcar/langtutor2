@@ -325,3 +325,7 @@ LangTutor is a freemium service that allows users to learn a language with the h
 - For plans, agentic and coordinator support value defines allowed minutes per month. Update frontend label and backend logic accordingly
 - For plans, voice call, video call and text learning values are in minutes per day. Update frontend label and backend logic accordingly
 - Bug Fix: For personas after upload the image of the persona is not showing in the admin console
+
+## 8. Feature Extension 4
+- Bug Fix: In admin frontend, language icon still not showing in language list page
+- Bug Fix: In admin frontend, persona image is not showing in persona list page

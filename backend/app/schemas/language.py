@@ -14,6 +14,7 @@ class LanguageCreate(BaseModel):
 class LanguageUpdate(BaseModel):
     name: str | None = None
     locale: str | None = None
+    icon_url: str | None = None
     is_default: bool | None = None
     is_fallback: bool | None = None
     is_active: bool | None = None

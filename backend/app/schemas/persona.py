@@ -17,6 +17,7 @@ class PersonaUpdate(BaseModel):
     gender: str | None = None
     type: str | None = None
     teaching_style: str | None = None
+    image_url: str | None = None
     is_active: bool | None = None
 
 
