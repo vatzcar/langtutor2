@@ -15,7 +15,7 @@ Self-hosted STT + TTS + Avatar pipeline running on a single RTX 3070 Ti
      [NVIDIA Container Toolkit install doc](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
 4. **Verify GPU is visible to Docker:**
    ```bash
-   docker run --rm --gpus all nvidia/cuda:12.3.0-base-ubuntu22.04 nvidia-smi
+   docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
    ```
    You should see your 3070 Ti listed. If you see
    `Could not select device driver "nvidia"` — the toolkit is not installed
