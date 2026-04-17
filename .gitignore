@@ -1,0 +1,162 @@
+# =============================================================================
+# LangTutor .gitignore — excludes third-party dependencies, build artifacts,
+# local config, uploaded media, and IDE/OS scratch files.
+# =============================================================================
+
+# ---- Secrets / local env ----
+*.env
+.env
+.env.local
+.env.*.local
+backend/.env
+mobile/.env
+admin/.env
+*.pem
+*.key
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ---- Docker / runtime data ----
+pgdata/
+*.pid
+*.log
+
+# ---- Uploaded media (runtime user content) ----
+backend/uploads/
+uploads/
+
+# =============================================================================
+# Python (backend)
+# =============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual envs
+venv/
+.venv/
+env/
+ENV/
+backend/venv/
+backend/.venv/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Alembic generated (keep migrations versioned but not local cache)
+backend/alembic/__pycache__/
+
+# SQLite databases (local dev)
+*.db
+*.sqlite
+*.sqlite3
+test.db
+
+# =============================================================================
+# Node / Vite / React (admin console)
+# =============================================================================
+node_modules/
+admin/node_modules/
+admin/dist/
+admin/build/
+admin/.vite/
+admin/stats.html
+
+# npm / yarn / pnpm logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Local Vite cache
+.vite/
+
+# =============================================================================
+# Flutter / Dart (mobile)
+# =============================================================================
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.packages
+mobile/.pub-cache/
+mobile/.pub/
+mobile/build/
+mobile/.fvm/
+mobile/coverage/
+mobile/doc/api/
+mobile/ios/Pods/
+mobile/ios/.symlinks/
+mobile/ios/Flutter/Flutter.framework
+mobile/ios/Flutter/Flutter.podspec
+mobile/ios/Flutter/Generated.xcconfig
+mobile/ios/Flutter/ephemeral/
+mobile/ios/Flutter/flutter_export_environment.sh
+mobile/android/.gradle/
+mobile/android/captures/
+mobile/android/gradlew
+mobile/android/gradlew.bat
+mobile/android/local.properties
+mobile/android/**/GeneratedPluginRegistrant.java
+mobile/android/key.properties
+mobile/android/app/release/
+mobile/android/app/build/
+mobile/android/app/debug/
+mobile/android/app/profile/
+mobile/android/.idea/
+mobile/*.iml
+mobile/linux/flutter/ephemeral/
+mobile/macos/Flutter/ephemeral/
+mobile/macos/Pods/
+mobile/windows/flutter/ephemeral/
+mobile/web/build/
+
+# Freezed / json_serializable generated
+*.freezed.dart
+*.g.dart
+*.mocks.dart
+
+# =============================================================================
+# Misc
+# =============================================================================
+# Temp directories
+tmp/
+temp/
+.cache/
+
+# Archives
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
