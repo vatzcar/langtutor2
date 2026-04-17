@@ -5,12 +5,37 @@ from __future__ import annotations
 import json
 import logging
 
-from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, cli
+from livekit.agents import AutoSubscribe, JobContext, JobProcess, WorkerOptions, cli
+from livekit.plugins import silero
 
 from app.ai.coordinator_agent import create_coordinator_agent
+from app.ai.stt_plugin import FasterWhisperSTT
+from app.ai.tts_plugin import FishSpeechTTS
 from app.ai.tutor_agent import create_tutor_agent
+from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def prewarm(proc: JobProcess) -> None:
+    """Prewarm function — runs once per worker process.
+
+    Loads the silero VAD (CPU-only, ~40 MB) and instantiates the STT and
+    TTS plugin clients. These objects are stashed in ``proc.userdata`` so
+    each job can reuse them (saves model reload + HTTP connection setup
+    per call).
+    """
+    logger.info("Prewarming worker process: loading VAD + STT/TTS clients.")
+    proc.userdata["vad"] = silero.VAD.load()
+    proc.userdata["stt"] = FasterWhisperSTT(
+        base_url=settings.stt_base_url,
+        model=settings.stt_model,
+    )
+    proc.userdata["tts"] = FishSpeechTTS(
+        base_url=settings.tts_base_url,
+    )
+    proc.userdata["avatar_enabled"] = settings.avatar_enabled
+    proc.userdata["avatar_base_url"] = settings.avatar_base_url
 
 
 async def entrypoint(ctx: JobContext) -> None:
@@ -49,4 +74,9 @@ async def entrypoint(ctx: JobContext) -> None:
 
 
 if __name__ == "__main__":
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
+    cli.run_app(
+        WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            prewarm_fnc=prewarm,
+        )
+    )

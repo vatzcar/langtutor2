@@ -1,0 +1,113 @@
+# LangTutor AI stack — GPU-accelerated STT, TTS, and Avatar services.
+#
+# Runs independently from the main docker-compose.yml. Start with:
+#   docker compose -f docker-compose.ai.yml up
+#
+# Target hardware: RTX 3070 Ti (8GB VRAM). VRAM budget:
+#   STT (faster-whisper base.en, fp16)  ~1.5 GB
+#   TTS (fish-speech-1.5)               ~2.5 GB
+#   Avatar (LivePortrait)               ~3.5 GB
+#   ----------------------------------------------
+#   Total                               ~7.5 GB
+#
+# If OOM on the avatar, set AVATAR_ENABLED=false in the backend .env and
+# comment out the `avatar` service below.
+
+services:
+  stt:
+    image: fedirz/faster-whisper-server:latest-cuda
+    container_name: langtutor-stt
+    restart: unless-stopped
+    ports:
+      - "8010:8000"
+    environment:
+      WHISPER__MODEL: "Systran/faster-whisper-base.en"
+      WHISPER__INFERENCE_DEVICE: "cuda"
+      WHISPER__COMPUTE_TYPE: "float16"
+      # faster-whisper-server reads HuggingFace cache from ~/.cache/huggingface.
+      HF_HOME: "/root/.cache/huggingface"
+    volumes:
+      - ai-models:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - ai-network
+
+  tts:
+    image: fishaudio/fish-speech:latest-cuda
+    container_name: langtutor-tts
+    restart: unless-stopped
+    ports:
+      - "8011:8080"    # HTTP API
+      - "7860:7860"    # Gradio UI (dev convenience; remove in prod)
+    environment:
+      # See https://github.com/fishaudio/fish-speech for env/config knobs.
+      # If the prebuilt image does not serve on :8080 out of the box, the
+      # official README documents `python -m tools.api_server --listen 0.0.0.0:8080`.
+      FISH_SPEECH_CHECKPOINT: "fish-speech-1.5"
+    volumes:
+      - ai-models:/app/checkpoints
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - ai-network
+
+  avatar:
+    build:
+      context: ./services/ai/avatar
+      dockerfile: Dockerfile
+    container_name: langtutor-avatar
+    restart: unless-stopped
+    ports:
+      - "8012:8000"
+    environment:
+      LIVEPORTRAIT_DEVICE: "cuda"
+      LIVEPORTRAIT_CHECKPOINT_DIR: "/app/checkpoints"
+    volumes:
+      - ai-models:/app/checkpoints
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - ai-network
+
+volumes:
+  ai-models:
+    name: langtutor-ai-models
+
+networks:
+  ai-network:
+    name: langtutor-ai-network
+    driver: bridge
