@@ -23,6 +23,12 @@ Thumbs.db
 *.swo
 *~
 
+# ---- Claude Code / oh-my-claudecode local tooling state ----
+.omc/
+.claude/
+.cursor/
+.windsurf/
+
 # ---- Docker / runtime data ----
 pgdata/
 *.pid
