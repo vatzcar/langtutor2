@@ -12,7 +12,7 @@
 # need to adjust app.py to match the exact upstream call signature after
 # first build — see services/ai/avatar/README.md.
 
-FROM nvidia/cuda:12.3.0-cudnn9-devel-ubuntu22.04
+FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
