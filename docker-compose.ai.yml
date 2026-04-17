@@ -15,7 +15,9 @@
 
 services:
   stt:
-    image: fedirz/faster-whisper-server:latest-cuda
+    # Community-maintained fork of faster-whisper-server (renamed to Speaches).
+    # Public image on GitHub Container Registry. OpenAI-compatible transcription API.
+    image: ghcr.io/speaches-ai/speaches:latest-cuda
     container_name: langtutor-stt
     restart: unless-stopped
     ports:
@@ -24,7 +26,6 @@ services:
       WHISPER__MODEL: "Systran/faster-whisper-base.en"
       WHISPER__INFERENCE_DEVICE: "cuda"
       WHISPER__COMPUTE_TYPE: "float16"
-      # faster-whisper-server reads HuggingFace cache from ~/.cache/huggingface.
       HF_HOME: "/root/.cache/huggingface"
     volumes:
       - ai-models:/root/.cache/huggingface
@@ -45,25 +46,27 @@ services:
       - ai-network
 
   tts:
-    image: fishaudio/fish-speech:latest-cuda
+    # Fish-Audio does not publish an official image — we build from source.
+    # See services/ai/tts/README.md for details.
+    build:
+      context: ./services/ai/tts
+      dockerfile: Dockerfile
     container_name: langtutor-tts
     restart: unless-stopped
     ports:
       - "8011:8080"    # HTTP API
-      - "7860:7860"    # Gradio UI (dev convenience; remove in prod)
     environment:
-      # See https://github.com/fishaudio/fish-speech for env/config knobs.
-      # If the prebuilt image does not serve on :8080 out of the box, the
-      # official README documents `python -m tools.api_server --listen 0.0.0.0:8080`.
       FISH_SPEECH_CHECKPOINT: "fish-speech-1.5"
+      FISH_SPEECH_CHECKPOINT_DIR: "/app/checkpoints"
+      PORT: "8080"
     volumes:
       - ai-models:/app/checkpoints
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 180s
+      start_period: 300s
     deploy:
       resources:
         reservations:
