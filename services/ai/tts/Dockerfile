@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git curl ca-certificates ffmpeg libsox-dev sox \
         build-essential pkg-config cmake \
         libsndfile1 \
+        portaudio19-dev libasound2-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Many modern ML Python packages (tokenizers, pydantic-core) build via maturin
