@@ -22,10 +22,17 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3.10 python3-pip python3.10-dev python3.10-venv \
-        git curl ffmpeg libsox-dev sox \
-        build-essential pkg-config \
+        git curl ca-certificates ffmpeg libsox-dev sox \
+        build-essential pkg-config cmake \
         libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
+
+# Many modern ML Python packages (tokenizers, pydantic-core) build via maturin
+# and need a Rust toolchain at install time.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- --default-toolchain stable --profile minimal -y \
+    && echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> /etc/profile.d/cargo.sh
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 RUN ln -sf /usr/bin/python3.10 /usr/bin/python && \
     ln -sf /usr/bin/python3.10 /usr/bin/python3
@@ -40,13 +47,24 @@ RUN git clone --depth 1 --branch ${FISH_REF} \
 
 WORKDIR /app/fish-speech
 
-# Fish-Speech declares its deps in pyproject.toml.
-# We install torch with CUDA 12.1 wheels explicitly so pip doesn't fetch the
-# CPU-only wheel by accident.
-RUN pip install --upgrade pip setuptools wheel && \
-    pip install torch==2.3.1 torchaudio==2.3.1 --index-url https://download.pytorch.org/whl/cu121 && \
-    pip install -e . && \
-    pip install "fastapi>=0.110" "uvicorn[standard]>=0.29" "pyrootutils" "loguru"
+# Split the pip installs into separate RUN layers so build failures show
+# which step actually broke. Torch wheels come from the pytorch index so we
+# don't accidentally pull the CPU-only build.
+RUN pip install --upgrade pip setuptools wheel
+
+RUN pip install \
+      torch==2.3.1 \
+      torchaudio==2.3.1 \
+      --index-url https://download.pytorch.org/whl/cu121
+
+RUN pip install -e .
+
+RUN pip install \
+      "fastapi>=0.110" \
+      "uvicorn[standard]>=0.29" \
+      "pyrootutils" \
+      "loguru" \
+      "huggingface_hub>=0.23"
 
 # Pre-make the checkpoint dir so the mounted volume has the right ownership.
 RUN mkdir -p /app/checkpoints
