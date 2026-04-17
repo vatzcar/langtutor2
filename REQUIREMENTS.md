@@ -329,3 +329,7 @@ LangTutor is a freemium service that allows users to learn a language with the h
 ## 8. Feature Extension 4
 - Bug Fix: In admin frontend, language icon still not showing in language list page
 - Bug Fix: In admin frontend, persona image is not showing in persona list page
+
+## 9. Feature Extension 5
+- Bug Fix: In admin frontend, under Reports/Logs menu and Logs tab. It doesn't display any log upon search. Check if activities are being logged or not, if not make log on each action and make it available for search and display
+- Push the code to git repo after fixes are done

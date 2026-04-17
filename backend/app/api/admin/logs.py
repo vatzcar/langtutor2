@@ -1,17 +1,18 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.api.deps import require_permission
 from app.models.admin import AdminUser
+from app.schemas.audit import AuditLogResponse
 from app.services import audit_log as log_service
 
 router = APIRouter(prefix="/admin/logs", tags=["admin-logs"])
 
 
-@router.get("")
+@router.get("", response_model=list[AuditLogResponse])
 async def get_logs(
     skip: int = 0,
     limit: int = 50,

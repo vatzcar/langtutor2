@@ -5,6 +5,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.middleware.audit import AuditMiddleware
+
 from app.api.auth import router as auth_router
 from app.api.admin.languages import router as admin_languages_router
 from app.api.admin.personas import router as admin_personas_router
@@ -41,6 +43,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Audit trail — auto-logs every successful admin mutation.
+app.add_middleware(AuditMiddleware)
 
 # Auth
 app.include_router(auth_router, prefix="/api/v1")
