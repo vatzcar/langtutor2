@@ -42,7 +42,7 @@ WORKDIR /app
 
 # Shallow-clone fish-speech at a known-good ref. Override FISH_REF at build
 # time to move forward when upstream lands changes.
-ARG FISH_REF=main
+ARG FISH_REF=v1.5.0
 RUN git clone --depth 1 --branch ${FISH_REF} \
     https://github.com/fishaudio/fish-speech.git /app/fish-speech
 
