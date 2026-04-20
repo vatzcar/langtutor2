@@ -35,5 +35,7 @@ exec python -m tools.api_server \
     --listen "0.0.0.0:${PORT}" \
     --llama-checkpoint-path "${MODEL_PATH}" \
     --decoder-checkpoint-path "${MODEL_PATH}/firefly-gan-vq-fsq-8x1024-21hz-generator.pth" \
-    --decoder-config-name firefly_gan_vq \
-    --compile
+    --decoder-config-name firefly_gan_vq
+# NOTE: --compile removed — torch.compile hangs indefinitely on Ada (sm_89)
+# GPUs with torch 2.3.1. Eager mode is ~2x slower but reliable. Re-enable
+# once upgrading to torch 2.4+ in the Dockerfile.
