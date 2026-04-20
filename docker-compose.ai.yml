@@ -26,9 +26,9 @@ services:
       WHISPER__MODEL: "Systran/faster-whisper-base.en"
       WHISPER__INFERENCE_DEVICE: "cuda"
       WHISPER__COMPUTE_TYPE: "float16"
-      HF_HOME: "/root/.cache/huggingface"
+      HF_HOME: "/home/ubuntu/.cache/huggingface"
     volumes:
-      - ai-models:/root/.cache/huggingface
+      - ai-models:/home/ubuntu/.cache/huggingface
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
