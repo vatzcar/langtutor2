@@ -38,6 +38,12 @@ pgdata/
 backend/uploads/
 uploads/
 
+# ---- Local test audio / scratch files ----
+sample.wav
+*.sample.wav
+out.wav
+test.wav
+
 # =============================================================================
 # Python (backend)
 # =============================================================================
