@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 10
 
     gemini_api_key: str = ""
+    # Gemini model name — overridable via LANGTUTOR_GEMINI_MODEL.
+    # Default matches REQUIREMENTS.md §2. Alternatives: "gemini-2.5-flash",
+    # "gemini-2.5-pro", "gemini-1.5-pro" (higher quality, slower).
+    gemini_model: str = "gemini-1.5-flash"
 
     livekit_url: str = "http://localhost:7880"
     livekit_api_key: str = "devkey"

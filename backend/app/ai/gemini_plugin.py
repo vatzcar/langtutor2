@@ -42,7 +42,7 @@ class GeminiLLM(llm.LLM):
     def __init__(self) -> None:
         super().__init__()
         genai.configure(api_key=settings.gemini_api_key)
-        self._model = genai.GenerativeModel("gemini-1.5-flash")
+        self._model = genai.GenerativeModel(settings.gemini_model)
         self._chat = None
 
     def _convert_messages(
