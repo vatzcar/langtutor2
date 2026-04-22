@@ -67,6 +67,16 @@ if [ ! -s "${MARKER}" ]; then
     test -s "${VOLUME_DIR}/musetalk/musetalk.json" || \
       curl -fsSL "${HF_BASE}/TMElyralab/MuseTalk/resolve/main/musetalk/musetalk.json" \
         -o "${VOLUME_DIR}/musetalk/musetalk.json"
+
+    # Patch 6: the face-parse-bisent weight is hosted on Google Drive; if
+    # the main script's gdown call failed silently (e.g. when the sed of
+    # '--id' didn't take, or GDrive rate-limited) that file is missing.
+    # Retry from inside the container where gdown is already installed.
+    if [ ! -s "${VOLUME_DIR}/face-parse-bisent/79999_iter.pth" ]; then
+        mkdir -p "${VOLUME_DIR}/face-parse-bisent"
+        gdown 154JgKpzCPW82qINcVieuPH3fZ2e0P812 \
+            -O "${VOLUME_DIR}/face-parse-bisent/79999_iter.pth"
+    fi
     set +x
 else
     echo "[entrypoint] Weights already present at ${MARKER}"
