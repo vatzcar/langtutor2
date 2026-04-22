@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, extractErrorMessage } from '../api/client';
+import { api, assetUrl, extractErrorMessage } from '../api/client';
 import Table, { Column } from '../components/Table';
 import Button from '../components/Button';
 import Modal from '../components/Modal';
@@ -128,7 +128,7 @@ export default function LanguageManagement() {
       className: 'w-20',
       render: (r) =>
         r.icon_url ? (
-          <img src={r.icon_url} alt={r.name} className="h-8 w-8 rounded object-cover" />
+          <img src={assetUrl(r.icon_url)} alt={r.name} className="h-8 w-8 rounded object-cover" />
         ) : (
           <span className="text-xs text-textSecondary">—</span>
         ),

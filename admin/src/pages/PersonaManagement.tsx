@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, extractErrorMessage } from '../api/client';
+import { api, assetUrl, extractErrorMessage } from '../api/client';
 import Table, { Column } from '../components/Table';
 import Button from '../components/Button';
 import Modal from '../components/Modal';
@@ -161,7 +161,7 @@ export default function PersonaManagement() {
       className: 'w-20',
       render: (r) =>
         r.image_url ? (
-          <img src={r.image_url} alt={r.name} className="h-10 w-10 rounded-full object-cover" />
+          <img src={assetUrl(r.image_url)} alt={r.name} className="h-10 w-10 rounded-full object-cover" />
         ) : (
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-xs text-textSecondary">
             —

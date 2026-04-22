@@ -59,3 +59,20 @@ export async function fetchMe(): Promise<AdminMe> {
   const { data } = await api.get<AdminMe>('/auth/me');
   return data;
 }
+
+/**
+ * Resolve a backend-relative path (e.g. `/uploads/languages/abc.png`) into a
+ * fully-qualified URL pointing at the API host. Passes through absolute URLs
+ * untouched.
+ *
+ * The backend stores uploaded asset paths as origin-relative strings. Rendered
+ * as `<img src={x}>` in the admin SPA, they'd resolve against the admin's
+ * origin (e.g. Vite dev server on :5173) instead of the backend host.
+ */
+export function assetUrl(path: string | null | undefined): string {
+  if (!path) return '';
+  if (/^https?:\/\//i.test(path)) return path;
+  // API_BASE_URL is `<origin>/api/v1`; strip the `/api/v1` suffix to get origin.
+  const origin = API_BASE_URL.replace(/\/api\/v1\/?$/, '');
+  return path.startsWith('/') ? `${origin}${path}` : `${origin}/${path}`;
+}
