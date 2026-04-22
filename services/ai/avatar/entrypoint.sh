@@ -31,10 +31,13 @@ if [ ! -s "${MARKER}" ]; then
     # Patch 1: hf-mirror.com (China default) -> canonical HF endpoint.
     sed -i 's|hf-mirror.com|huggingface.co|g' download_weights.sh
 
-    # Patch 2: `huggingface-cli` was removed in huggingface_hub 1.0 and is
-    # now a hollow deprecation stub that exits 0 without downloading.
-    # Replace with the current CLI `hf download`.
-    sed -i 's|huggingface-cli download|hf download|g' download_weights.sh
+    # Patch 2: the script runs `pip install -U "huggingface_hub[cli]"` which
+    # bumps HF hub to 1.x, which (a) removes the `huggingface-cli` entry
+    # point that the rest of the script uses (replaced by `hf`) and (b)
+    # breaks MuseTalk's pinned tokenizers/transformers. Neuter the upgrade:
+    # hf-hub 0.30.2 (already installed by MuseTalk's requirements.txt) still
+    # provides `huggingface-cli download` and works with tokenizers 0.15.2.
+    sed -i 's|pip install -U "huggingface_hub\[cli\]"|echo "skip hf-hub upgrade"|' download_weights.sh
 
     # Patch 3: current gdown no longer accepts --id. The value passes
     # positionally. Strip ' --id '.
