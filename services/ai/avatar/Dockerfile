@@ -49,9 +49,9 @@ RUN pip install -r /app/MuseTalk/requirements.txt
 # the source-build path (mmcv 2.0.x fails to build under modern pip
 # because its setup.py imports pkg_resources which isn't in pip's
 # isolated build env). mmengine/mmdet/mmpose are pure Python from PyPI.
-RUN pip install "mmcv==2.1.0" \
+RUN pip install "mmcv==2.2.0" \
       -f https://download.openmmlab.com/mmcv/dist/cu121/torch2.3/index.html \
- && pip install "mmengine>=0.10,<0.12" "mmdet==3.2.0" "mmpose==1.3.1"
+ && pip install "mmengine>=0.10,<0.12" "mmdet==3.3.0" "mmpose==1.3.2"
 
 # FastAPI shim deps.
 COPY requirements.txt /app/shim-requirements.txt
