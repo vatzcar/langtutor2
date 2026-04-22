@@ -42,13 +42,13 @@ RUN pip install --upgrade pip setuptools wheel && \
 # and patch any incompat at runtime if needed.
 RUN pip install -r /app/MuseTalk/requirements.txt
 
-# mmlab stack (DWPose + mmpose), required at inference time but not in the
-# pinned requirements.txt. Versions chosen to be compatible with torch 2.3.
-RUN pip install -U openmim && \
-    mim install "mmengine" && \
-    mim install "mmcv==2.0.1" && \
-    mim install "mmdet==3.1.0" && \
-    mim install "mmpose==1.1.0"
+# NOTE: mmlab stack (mmcv/mmdet/mmpose) is NOT installed here.
+# MuseTalk's own requirements.txt doesn't list them, and their DWPose path
+# loads a raw torch checkpoint (dw-ll_ucoco_384.pth) rather than going
+# through mmpose. If a runtime ImportError for mmcv appears, add back:
+#   RUN pip install --no-build-isolation mmengine \
+#     && pip install --no-build-isolation mmcv==2.1.0 \
+#        -f https://download.openmmlab.com/mmcv/dist/cu121/torch2.3/index.html
 
 # FastAPI shim deps.
 COPY requirements.txt /app/shim-requirements.txt
