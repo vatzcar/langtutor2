@@ -1,41 +1,82 @@
-# Avatar service (LivePortrait)
+# Avatar — MuseTalk v1.5
 
-Custom Docker service that wraps [KwaiVGI/LivePortrait](https://github.com/KwaiVGI/LivePortrait)
-behind a thin FastAPI shim.
+Audio-driven talking-head video service.
 
-## Status
+**Input:** a source video (or image) of a person's face + a WAV of spoken audio
+**Output:** MP4 with the source face's lips synchronized to the audio
 
-**This container will build, but the shim in `app.py` falls back to a
-stub pipeline unless the upstream module paths match what we expect.**
-On first run you will almost certainly need to:
-
-1. `docker compose -f docker-compose.ai.yml run --rm --entrypoint bash avatar`
-2. Inspect `/app/LivePortrait/` for the current entrypoint (README, `inference.py`,
-   `src/live_portrait_pipeline.py`). The project rearranges modules periodically.
-3. Adjust `_load_pipeline` and the call in `_run` inside `app.py` accordingly.
-4. Download weights. The upstream README has a direct link; place them under
-   `/app/checkpoints/` (persisted via the `ai-models` volume).
-5. Rebuild: `docker compose -f docker-compose.ai.yml build avatar`.
-
-## Why a custom image?
-
-There is no official public LivePortrait Docker image. `livekit-plugins-avatartalk`
-on pypi talks to a hosted SaaS (avatartalk.ai), which is a paid service. To
-self-host we run LivePortrait ourselves and either (a) expose an HTTP API that
-the backend can poll per utterance, or (b) implement a LiveKit video track
-publisher that streams rendered frames.
-
-This shim takes approach (a) as the minimum viable integration.
+We swapped out the original LivePortrait shim because LivePortrait alone is
+*video-driven* (warps a source image using a driving video's head motion) and
+does not produce audio-synchronized lips. MuseTalk (TMElyralab, July 2024)
+combines audio feature extraction (Whisper) with a face-editing UNet to
+produce lip-sync directly from WAV input.
 
 ## Endpoints
 
-- `GET  /health` — liveness.
-- `POST /render` — multipart: `audio` (WAV) + `portrait` (JPG/PNG). Returns MP4.
-- `WS   /stream` — stub for real-time streaming. Not wired.
+| Route            | Verb | Purpose                                   |
+|------------------|------|-------------------------------------------|
+| `/health`        | GET  | Readiness + weights-present check         |
+| `/render`        | POST | One-shot audio + source -> MP4 (~60s per 10s audio) |
+| `/stream`        | WS   | Streaming — stub, not implemented yet     |
+
+### `/render` request
+
+Multipart form:
+- `audio`: WAV file (16 kHz mono is best; resampled otherwise)
+- `source`: MP4 video or still image (jpg/png) of the speaker's face
+- `bbox_shift`: optional int (default 0), vertical bbox adjustment in pixels
+
+Response: `video/mp4` bytes.
+
+## First-run weight download
+
+On first container start, `entrypoint.sh` runs MuseTalk's own
+`download_weights.sh`, which fetches ~3 GB from HuggingFace, Google Drive,
+and pytorch.org into the `ai-models` named volume at `/app/checkpoints`:
+
+```
+models/
+  musetalkV15/{unet.pth, musetalk.json}
+  sd-vae/{config.json, diffusion_pytorch_model.bin}
+  whisper/{config.json, pytorch_model.bin, preprocessor_config.json}
+  dwpose/dw-ll_ucoco_384.pth
+  syncnet/latentsync_syncnet.pt
+  face-parse-bisent/{79999_iter.pth, resnet18-5c106cde.pth}
+```
+
+Subsequent boots skip the download.
 
 ## VRAM
 
-About 3.5 GB on an RTX 3070 Ti with the default configuration. Combined with
-TTS + STT that's ~7.5 GB on an 8 GB card — tight but feasible. If you hit
-CUDA OOM, set `LANGTUTOR_AVATAR_ENABLED=false` on the backend and disable
-this service in `docker-compose.ai.yml`.
+~3.5 GB at inference with v1.5, fp16 path. Comfortable on any 8 GB+ card.
+
+## Building
+
+```bash
+docker compose -f docker-compose.ai.yml build avatar
+```
+
+~15-25 min first build (CUDA base + torch + mmlab + MuseTalk deps).
+
+## Known caveats
+
+1. **Subprocess per request.** Each `/render` call forks `python -m scripts.inference`
+   which reloads models (~5-10 s overhead). For production, refactor to keep
+   a persistent worker; MuseTalk's realtime module is a starting point.
+2. **mmpose/mmcv pin.** MuseTalk transitively requires the mmlab stack with
+   specific versions. The Dockerfile pins `mmcv==2.0.1 / mmdet==3.1.0 /
+   mmpose==1.1.0`, known compatible with torch 2.3.1. Bumping torch likely
+   needs matching bumps here.
+3. **Streaming.** `/stream` WebSocket endpoint returns an error. Real-time
+   inference requires persistent worker + chunked encoding — not wired.
+4. **Hugging Face mirror.** MuseTalk's download script defaults to
+   `hf-mirror.com` (China). The entrypoint patches it to `huggingface.co`
+   before first run.
+
+## Testing
+
+```bash
+# After the container is healthy and weights are present
+curl -F audio=@sample.wav -F source=@face.jpg \
+     http://localhost:8012/render -o out.mp4
+```

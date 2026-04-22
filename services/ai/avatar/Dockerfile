@@ -1,16 +1,11 @@
-# Custom LivePortrait avatar service.
+# MuseTalk v1.5 avatar service.
 #
-# Clones KwaiVGI/LivePortrait, installs its Python deps, and serves a thin
-# FastAPI shim (app.py) on :8000. Model weights are NOT baked in — they are
-# downloaded on first use into the mounted `ai-models` volume.
+# Audio-driven talking-head: source image/video + WAV -> MP4 with lip-sync.
+# Swapped from LivePortrait because LivePortrait alone is video-driven and
+# doesn't sync lips to audio. See services/ai/avatar/README.md.
 #
 # Build:   docker compose -f docker-compose.ai.yml build avatar
-# VRAM:    ~3.5 GB at inference (standard settings).
-#
-# NOTE: LivePortrait's upstream inference API is a Python module, NOT a web
-# API. The shim in app.py calls into the project directly. You WILL likely
-# need to adjust app.py to match the exact upstream call signature after
-# first build — see services/ai/avatar/README.md.
+# VRAM:    ~3.5 GB at inference (v1.5, fp16 path).
 
 FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
 
@@ -20,15 +15,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git \
-      curl \
-      ffmpeg \
-      libgl1 \
-      libglib2.0-0 \
-      python3.10 \
-      python3.10-dev \
-      python3-pip \
-      build-essential \
+      git curl ffmpeg \
+      libgl1 libglib2.0-0 libsndfile1 \
+      python3.10 python3.10-dev python3-pip \
+      build-essential pkg-config cmake \
     && rm -rf /var/lib/apt/lists/*
 
 RUN ln -sf /usr/bin/python3.10 /usr/bin/python && \
@@ -36,27 +26,44 @@ RUN ln -sf /usr/bin/python3.10 /usr/bin/python && \
 
 WORKDIR /app
 
-# Clone LivePortrait (pin a known-good commit in production).
-RUN git clone --depth 1 https://github.com/KwaiVGI/LivePortrait.git /app/LivePortrait
+# Pin MuseTalk to a known-good ref. Override via build-arg when bumping.
+ARG MUSETALK_REF=main
+RUN git clone --depth 1 --branch ${MUSETALK_REF} \
+    https://github.com/TMElyralab/MuseTalk.git /app/MuseTalk
 
-# Install torch first so LivePortrait's requirements don't pull a CPU-only wheel.
-RUN pip install --upgrade pip && \
-    pip install torch==2.3.0 torchvision==0.18.0 --index-url https://download.pytorch.org/whl/cu121
+# Install torch first with CUDA 12.1 wheels so MuseTalk's requirements.txt
+# doesn't pull a CPU-only build.
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install \
+      torch==2.3.1 torchvision==0.18.1 torchaudio==2.3.1 \
+      --index-url https://download.pytorch.org/whl/cu121
 
-# Install LivePortrait's requirements.
-RUN pip install -r /app/LivePortrait/requirements.txt || \
-    echo "WARNING: LivePortrait requirements install had issues; inspect manually."
+# MuseTalk deps. Their requirements.txt pins some old versions; install as-is
+# and patch any incompat at runtime if needed.
+RUN pip install -r /app/MuseTalk/requirements.txt
+
+# mmlab stack (DWPose + mmpose), required at inference time but not in the
+# pinned requirements.txt. Versions chosen to be compatible with torch 2.3.
+RUN pip install -U openmim && \
+    mim install "mmengine" && \
+    mim install "mmcv==2.0.1" && \
+    mim install "mmdet==3.1.0" && \
+    mim install "mmpose==1.1.0"
 
 # FastAPI shim deps.
-COPY requirements.txt /app/requirements.txt
-RUN pip install -r /app/requirements.txt
+COPY requirements.txt /app/shim-requirements.txt
+RUN pip install -r /app/shim-requirements.txt
 
 # Shim code.
 COPY app.py /app/app.py
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
-# NOTE: The shim imports from /app/LivePortrait — PYTHONPATH points there.
-ENV PYTHONPATH=/app/LivePortrait:/app
+ENV PYTHONPATH=/app/MuseTalk:/app
+ENV MUSETALK_REPO_DIR=/app/MuseTalk
+ENV MUSETALK_MODELS_DIR=/app/MuseTalk/models
+ENV MUSETALK_VERSION=v15
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["/entrypoint.sh"]

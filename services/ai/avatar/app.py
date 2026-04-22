@@ -1,178 +1,194 @@
-"""FastAPI shim around KwaiVGI/LivePortrait.
+"""FastAPI shim around TMElyralab/MuseTalk (v1.5).
 
-This is a *best-effort* wrapper — LivePortrait ships as a CLI / Python
-module, not a web service. The exact call signature varies between
-upstream commits. On first deployment you will likely need to:
+MuseTalk does audio-driven talking-head video: given a source video (or image)
+of a person's face + a WAV of speech, it produces an MP4 with lip-sync'd face.
 
-  1. Open /app/LivePortrait and inspect `inference.py` or the README
-     for the current pipeline entrypoint (e.g. ``LivePortraitPipeline``
-     or ``inference.main``).
-  2. Adjust ``_load_pipeline`` and ``_render`` below to match.
-  3. Download the pretrained weights. See the upstream README — typically
-     `python inference.py` on first run will pull weights into
-     ``pretrained_weights/``. Pre-download into the mounted volume to
-     keep weights across container rebuilds.
+Endpoints:
+    GET  /health
+    POST /render (multipart) -> video/mp4
+        audio:  WAV file (required)
+        source: MP4 video or image (jpg/png) of the speaker's face (required)
+        bbox_shift: optional int (default 0) — vertical bbox adjustment
+    WS   /stream  -> STUB. Real-time inference wrapping is TODO.
 
-The service exposes:
-  GET  /health                -> {"status": "ok"}
-  POST /render  (multipart)   -> MP4 bytes
-      fields: audio (wav), portrait (jpg/png)
-  WS   /stream                -> real-time streaming (stub; see below)
+Implementation note: MuseTalk's inference is a CLI (`scripts.inference`) that
+expects a yaml config and writes to a result dir. We invoke it as a subprocess
+per request, in the cloned repo root (`/app/MuseTalk`). The running container
+holds the models/ in an overlay bind-mount at `/app/MuseTalk/models`.
 """
 
 from __future__ import annotations
 
 import asyncio
-import io
 import logging
 import os
+import shutil
+import subprocess
 import tempfile
+import uuid
 from pathlib import Path
-from typing import Optional
 
-from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
+import yaml  # PyYAML ships with MuseTalk's requirements, and we also add it explicitly.
+from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, Response
 
 logger = logging.getLogger("avatar")
 logging.basicConfig(level=logging.INFO)
 
-CHECKPOINT_DIR = os.environ.get("LIVEPORTRAIT_CHECKPOINT_DIR", "/app/checkpoints")
-DEVICE = os.environ.get("LIVEPORTRAIT_DEVICE", "cuda")
+REPO_DIR = Path(os.environ.get("MUSETALK_REPO_DIR", "/app/MuseTalk"))
+MODELS_DIR = Path(os.environ.get("MUSETALK_MODELS_DIR", "/app/MuseTalk/models"))
+VERSION = os.environ.get("MUSETALK_VERSION", "v15")  # v15 = MuseTalk 1.5
+DEVICE = os.environ.get("MUSETALK_DEVICE", "cuda")
 
-app = FastAPI(title="LangTutor Avatar (LivePortrait)")
+# Weights presence flag — set once download_weights.sh has successfully run.
+_WEIGHT_MARKER = MODELS_DIR / "musetalkV15" / "unet.pth"
 
-_pipeline = None  # Lazy-loaded singleton.
-
-
-def _load_pipeline():
-    """Load the LivePortrait pipeline once.
-
-    The upstream API has shifted across commits. We try a couple of
-    common import paths and fall back to a placeholder that echoes
-    the input so the rest of the stack can be wired up.
-    """
-    global _pipeline
-    if _pipeline is not None:
-        return _pipeline
-
-    try:
-        # Path as of mid-2024; may change upstream.
-        from src.live_portrait_pipeline import LivePortraitPipeline  # type: ignore
-        from src.config.argument_config import ArgumentConfig  # type: ignore
-        from src.config.crop_config import CropConfig  # type: ignore
-        from src.config.inference_config import InferenceConfig  # type: ignore
-
-        inference_cfg = InferenceConfig()
-        crop_cfg = CropConfig()
-        args = ArgumentConfig()
-        _pipeline = LivePortraitPipeline(
-            inference_cfg=inference_cfg, crop_cfg=crop_cfg
-        )
-        logger.info("LivePortrait pipeline loaded via src.live_portrait_pipeline.")
-        return _pipeline
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "Could not load LivePortrait pipeline from expected module (%s). "
-            "Falling back to stub — adjust services/ai/avatar/app.py to match "
-            "your upstream version.",
-            exc,
-        )
-        _pipeline = _StubPipeline()
-        return _pipeline
+app = FastAPI(title="LangTutor Avatar (MuseTalk v1.5)")
 
 
-class _StubPipeline:
-    """Fallback used when the real pipeline can't be imported.
-
-    Returns a 1x1 black MP4 so callers can still exercise the API surface.
-    """
-
-    def execute(self, audio_path: str, portrait_path: str, output_path: str) -> str:
-        import subprocess
-
-        subprocess.run(
-            [
-                "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=256x256:d=1",
-                "-c:v", "libx264", "-pix_fmt", "yuv420p", output_path,
-            ],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        return output_path
-
-
-@app.on_event("startup")
-async def _startup() -> None:
-    Path(CHECKPOINT_DIR).mkdir(parents=True, exist_ok=True)
-    # Load the pipeline eagerly so the first request isn't 30s slow.
-    await asyncio.get_event_loop().run_in_executor(None, _load_pipeline)
+def _weights_ready() -> bool:
+    return _WEIGHT_MARKER.exists()
 
 
 @app.get("/health")
 async def health() -> JSONResponse:
-    ready = _pipeline is not None
-    return JSONResponse({"status": "ok" if ready else "loading", "device": DEVICE})
+    return JSONResponse(
+        {
+            "status": "ok" if _weights_ready() else "models-missing",
+            "weights": str(_WEIGHT_MARKER),
+            "version": VERSION,
+            "device": DEVICE,
+        }
+    )
+
+
+def _run_musetalk(
+    audio_path: Path,
+    source_path: Path,
+    output_dir: Path,
+    bbox_shift: int = 0,
+) -> Path:
+    """Invoke MuseTalk's inference script; return the path to the generated MP4."""
+    if not _weights_ready():
+        raise RuntimeError(
+            f"MuseTalk weights not found at {_WEIGHT_MARKER}. "
+            "Container entrypoint should run download_weights.sh on first boot."
+        )
+
+    # Build a per-request yaml config.
+    config = {
+        "task_0": {
+            "video_path": str(source_path),
+            "audio_path": str(audio_path),
+            "bbox_shift": int(bbox_shift),
+        }
+    }
+    config_path = output_dir / "config.yaml"
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+
+    if VERSION == "v15":
+        model_dir = MODELS_DIR / "musetalkV15"
+        unet_path = model_dir / "unet.pth"
+        version_arg = "v15"
+    else:
+        model_dir = MODELS_DIR / "musetalk"
+        unet_path = model_dir / "pytorch_model.bin"
+        version_arg = "v1"
+
+    cmd = [
+        "python", "-m", "scripts.inference",
+        "--inference_config", str(config_path),
+        "--result_dir", str(output_dir),
+        "--unet_model_path", str(unet_path),
+        "--unet_config", str(model_dir / "musetalk.json"),
+        "--version", version_arg,
+        "--whisper_dir", str(MODELS_DIR / "whisper"),
+    ]
+    logger.info("running: %s (cwd=%s)", " ".join(cmd), REPO_DIR)
+
+    proc = subprocess.run(
+        cmd,
+        cwd=str(REPO_DIR),
+        capture_output=True,
+        text=True,
+        timeout=600,  # 10 min hard cap
+    )
+    if proc.returncode != 0:
+        logger.error("musetalk stderr:\n%s", proc.stderr[-4000:])
+        raise RuntimeError(
+            f"MuseTalk inference failed (exit {proc.returncode}). "
+            f"Last stderr: {proc.stderr[-500:]}"
+        )
+
+    # MuseTalk writes the result as task_0.mp4 under result_dir/<video-name>/
+    # or directly under result_dir. Find the newest MP4.
+    candidates = sorted(output_dir.rglob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not candidates:
+        raise RuntimeError(f"MuseTalk produced no MP4 in {output_dir}")
+    return candidates[0]
 
 
 @app.post("/render")
 async def render(
     audio: UploadFile = File(...),
-    portrait: UploadFile = File(...),
+    source: UploadFile = File(...),
+    bbox_shift: int = Form(0),
 ) -> Response:
-    """Synchronous render: audio + portrait -> MP4 bytes."""
-    pipeline = _load_pipeline()
+    """One-shot audio + source -> MP4 with lip-sync."""
+    # Working dir for this request.
+    workdir = Path(tempfile.mkdtemp(prefix=f"musetalk-{uuid.uuid4().hex[:8]}-"))
+    try:
+        audio_ext = Path(audio.filename or "a.wav").suffix or ".wav"
+        src_ext = Path(source.filename or "s.mp4").suffix or ".mp4"
+        audio_path = workdir / f"audio{audio_ext}"
+        source_path = workdir / f"source{src_ext}"
 
-    with tempfile.TemporaryDirectory() as td:
-        audio_path = os.path.join(td, "audio.wav")
-        portrait_path = os.path.join(td, "portrait" + Path(portrait.filename or "p.jpg").suffix)
-        output_path = os.path.join(td, "out.mp4")
+        audio_path.write_bytes(await audio.read())
+        source_path.write_bytes(await source.read())
 
-        with open(audio_path, "wb") as f:
-            f.write(await audio.read())
-        with open(portrait_path, "wb") as f:
-            f.write(await portrait.read())
-
-        def _run() -> str:
-            if hasattr(pipeline, "execute"):
-                return pipeline.execute(audio_path, portrait_path, output_path)
-            # Newer upstream API variants:
-            if hasattr(pipeline, "__call__"):
-                return pipeline(audio=audio_path, source=portrait_path, output=output_path)  # type: ignore
-            raise RuntimeError("Pipeline has no recognized entrypoint.")
+        def _run() -> Path:
+            return _run_musetalk(audio_path, source_path, workdir, bbox_shift=bbox_shift)
 
         try:
-            await asyncio.get_event_loop().run_in_executor(None, _run)
+            mp4 = await asyncio.get_event_loop().run_in_executor(None, _run)
         except Exception as exc:  # noqa: BLE001
-            logger.exception("Render failed.")
+            logger.exception("render failed")
             return JSONResponse({"error": str(exc)}, status_code=500)
 
-        with open(output_path, "rb") as f:
-            video_bytes = f.read()
-
-    return Response(content=video_bytes, media_type="video/mp4")
+        video_bytes = mp4.read_bytes()
+        return Response(content=video_bytes, media_type="video/mp4")
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
 
 
 @app.websocket("/stream")
 async def stream(ws: WebSocket) -> None:
-    """Real-time streaming endpoint (stub).
+    """Real-time streaming — not implemented yet.
 
-    Protocol (proposed, subject to change once upstream streaming API is chosen):
-      client -> server: binary PCM16 audio frames (20ms @ 16kHz)
-      server -> client: binary H.264-in-MP4 chunks or raw frames
-
-    Upstream LivePortrait does not yet have a canonical streaming
-    interface. Implement by chunking audio into windows and invoking
-    the pipeline repeatedly, or port the TensorRT real-time branch.
+    MuseTalk has a realtime mode (`scripts.realtime_inference`) designed to
+    produce video chunks as audio arrives. Wiring that up needs a persistent
+    worker and a chunked frame-encoding path. For now this endpoint simply
+    closes the connection with an informational reason.
     """
     await ws.accept()
     try:
-        while True:
-            data = await ws.receive_bytes()
-            # TODO: feed `data` into a streaming inference loop and yield frames.
-            await ws.send_bytes(b"")  # placeholder ack
-    except WebSocketDisconnect:
-        return
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Stream error: %s", exc)
+        await ws.send_json(
+            {
+                "error": "streaming_not_implemented",
+                "hint": "Use POST /render for one-shot audio+source -> mp4.",
+            }
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    try:
         await ws.close(code=1011)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@app.on_event("startup")
+async def _startup() -> None:
+    logger.info(
+        "avatar startup: repo=%s models=%s weights_present=%s",
+        REPO_DIR, MODELS_DIR, _weights_ready(),
+    )
