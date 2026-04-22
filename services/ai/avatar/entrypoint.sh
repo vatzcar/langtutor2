@@ -48,6 +48,26 @@ if [ ! -s "${MARKER}" ]; then
     sed -i '2i set -euo pipefail' download_weights.sh
 
     bash download_weights.sh
+
+    # Patch 5: `hf download --include "a" "b"` only keeps one pattern per
+    # invocation (the last wins), so multi-file downloads in the upstream
+    # script drop all but one file. Post-fetch the missing configs.
+    echo "[entrypoint] Post-download: fetching missing JSON configs directly"
+    HF_BASE="https://huggingface.co"
+    set -x
+    test -s "${VOLUME_DIR}/sd-vae/config.json" || \
+      curl -fsSL "${HF_BASE}/stabilityai/sd-vae-ft-mse/resolve/main/config.json" \
+        -o "${VOLUME_DIR}/sd-vae/config.json"
+    test -s "${VOLUME_DIR}/whisper/config.json" || \
+      curl -fsSL "${HF_BASE}/openai/whisper-tiny/resolve/main/config.json" \
+        -o "${VOLUME_DIR}/whisper/config.json"
+    test -s "${VOLUME_DIR}/musetalkV15/musetalk.json" || \
+      curl -fsSL "${HF_BASE}/TMElyralab/MuseTalk/resolve/main/musetalkV15/musetalk.json" \
+        -o "${VOLUME_DIR}/musetalkV15/musetalk.json"
+    test -s "${VOLUME_DIR}/musetalk/musetalk.json" || \
+      curl -fsSL "${HF_BASE}/TMElyralab/MuseTalk/resolve/main/musetalk/musetalk.json" \
+        -o "${VOLUME_DIR}/musetalk/musetalk.json"
+    set +x
 else
     echo "[entrypoint] Weights already present at ${MARKER}"
 fi
