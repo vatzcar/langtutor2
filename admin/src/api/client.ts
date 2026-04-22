@@ -5,8 +5,16 @@ export const TOKEN_KEY = 'admin_token';
 export const EMAIL_KEY = 'admin_email';
 export const PERMISSIONS_KEY = 'admin_permissions';
 
+// Backend API URL.
+//   - Default points at the TensorDock dev server.
+//   - Override locally by creating admin/.env.local with:
+//       VITE_API_BASE_URL=http://localhost:8001/api/v1
+//   - For a production build, set VITE_API_BASE_URL at build time.
+export const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ?? 'http://38.224.253.71:8001/api/v1';
+
 export const api = axios.create({
-  baseURL: 'http://localhost:8001/api/v1',
+  baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
