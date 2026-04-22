@@ -51,7 +51,13 @@ RUN pip install -r /app/MuseTalk/requirements.txt
 # isolated build env). mmengine/mmdet/mmpose are pure Python from PyPI.
 RUN pip install "mmcv==2.2.0" \
       -f https://download.openmmlab.com/mmcv/dist/cu121/torch2.3/index.html \
- && pip install "mmengine>=0.10,<0.12" "mmdet==3.3.0" "mmpose==1.3.2"
+ && pip install "mmengine>=0.10,<0.12" "mmdet==3.3.0" \
+ # chumpy (SMPL body model dep; not actually used by MuseTalk's 2D pose path)
+ # has a setup.py that breaks under modern pip's isolated build env. Install
+ # it with --no-build-isolation so it reuses our outer setuptools + numpy,
+ # then pull mmpose which will see chumpy already satisfied.
+ && pip install --no-build-isolation "chumpy==0.70" \
+ && pip install "mmpose==1.3.2"
 
 # FastAPI shim deps.
 COPY requirements.txt /app/shim-requirements.txt
