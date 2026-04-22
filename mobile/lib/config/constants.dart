@@ -13,12 +13,12 @@ class AppConstants {
   /// For the **Android emulator**, change to `http://10.0.2.2:8001/api/v1`.
   /// For a device on the **same Wi-Fi**, use your PC's LAN IP, e.g.
   /// `http://192.168.1.42:8001/api/v1`.
-  static const String apiBaseUrl = 'http://localhost:8001/api/v1';
+  static const String apiBaseUrl = 'http://38.224.253.71:8001/api/v1';
 
   // ---------- LiveKit ----------
   /// WebSocket URL for the LiveKit server. See apiBaseUrl comment for the
   /// physical-device / emulator / LAN variants.
-  static const String liveKitUrl = 'ws://localhost:7880';
+  static const String liveKitUrl = 'ws://38.224.253.71:7880';
 
   // ---------- Auth ----------
   /// Access-token lifetime in hours.
