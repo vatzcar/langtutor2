@@ -57,7 +57,12 @@ RUN pip install "mmcv==2.2.0" \
  # it with --no-build-isolation so it reuses our outer setuptools + numpy,
  # then pull mmpose which will see chumpy already satisfied.
  && pip install --no-build-isolation "chumpy==0.70" \
- && pip install "mmpose==1.3.2"
+ && pip install "mmpose==1.3.2" \
+ # mmdet 3.3.0 hard-asserts mmcv<2.2.0 but mmcv only has prebuilt wheels
+ # for cu121/torch2.3 from 2.2.0 onward. The 2.1.x->2.2.0 jump didn't
+ # change the APIs mmdet/mmpose use, so widen mmdet's upper bound.
+ && sed -i 's|mmcv_maximum_version = .2\.2\.0.|mmcv_maximum_version = "2.3.0"|' \
+      /usr/local/lib/python3.10/dist-packages/mmdet/__init__.py
 
 # FastAPI shim deps.
 COPY requirements.txt /app/shim-requirements.txt
