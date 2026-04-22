@@ -25,11 +25,25 @@ fi
 
 MARKER="${VOLUME_DIR}/musetalkV15/unet.pth"
 if [ ! -s "${MARKER}" ]; then
-    echo "[entrypoint] Weights missing — running MuseTalk's download_weights.sh"
+    echo "[entrypoint] Weights missing — patching and running MuseTalk's download_weights.sh"
     cd "${REPO_DIR}"
-    # Patch: the script uses hf-mirror.com by default (for China). Swap to
-    # the canonical HF endpoint so downloads succeed from most regions.
+
+    # Patch 1: hf-mirror.com (China default) -> canonical HF endpoint.
     sed -i 's|hf-mirror.com|huggingface.co|g' download_weights.sh
+
+    # Patch 2: `huggingface-cli` was removed in huggingface_hub 1.0 and is
+    # now a hollow deprecation stub that exits 0 without downloading.
+    # Replace with the current CLI `hf download`.
+    sed -i 's|huggingface-cli download|hf download|g' download_weights.sh
+
+    # Patch 3: current gdown no longer accepts --id. The value passes
+    # positionally. Strip ' --id '.
+    sed -i 's| --id | |g' download_weights.sh
+
+    # Patch 4: make the script abort on the first real failure instead of
+    # lying with "All weights downloaded successfully" after a partial run.
+    sed -i '2i set -euo pipefail' download_weights.sh
+
     bash download_weights.sh
 else
     echo "[entrypoint] Weights already present at ${MARKER}"
