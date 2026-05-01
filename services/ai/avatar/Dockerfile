@@ -70,6 +70,7 @@ RUN pip install -r /app/shim-requirements.txt
 
 # Shim code.
 COPY app.py /app/app.py
+COPY worker.py /app/worker.py
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
