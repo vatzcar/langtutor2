@@ -94,6 +94,14 @@ async def _startup() -> None:
     state.queue = asyncio.Queue()
     state.runner_task = asyncio.create_task(_queue_runner())
 
+    # MuseTalk's load_all_model resolves VAE/etc. via paths relative to cwd
+    # (e.g. "models/sd-vae"). The repo expects to *be* the cwd. Match that.
+    if REPO_DIR.is_dir():
+        try:
+            os.chdir(REPO_DIR)
+        except OSError as exc:  # noqa: BLE001
+            logger.warning("chdir to %s failed: %s", REPO_DIR, exc)
+
     if not _weights_ready():
         state.worker_error = (
             f"weights missing at {_WEIGHT_MARKER}; entrypoint must run "
