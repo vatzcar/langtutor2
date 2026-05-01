@@ -34,6 +34,7 @@ class Persona(Base):
     name: Mapped[str] = mapped_column(String(100))
     language_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("languages.id"))
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    idle_video_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     gender: Mapped[str] = mapped_column(String(20))
     type: Mapped[str] = mapped_column(String(20))
     teaching_style: Mapped[str | None] = mapped_column(String(30), nullable=True)

@@ -76,6 +76,15 @@ export default function PersonaManagement() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLanguageId]);
 
+  // Poll while any persona has a pending idle loop.
+  useEffect(() => {
+    const hasPending = personas.some((p) => p.idle_loop_status === 'pending');
+    if (!hasPending) return;
+    const timer = setInterval(() => loadPersonas(), 10_000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [personas]);
+
   const openCreate = () => {
     setEditing(null);
     setForm({
@@ -171,6 +180,23 @@ export default function PersonaManagement() {
     { key: 'name', label: 'Name' },
     { key: 'gender', label: 'Gender' },
     { key: 'type', label: 'Type' },
+    {
+      key: 'idle_loop_status',
+      label: 'Idle Loop',
+      render: (r) => {
+        const status = r.idle_loop_status ?? 'none';
+        const styles: Record<string, string> = {
+          ready: 'bg-green-100 text-green-800',
+          pending: 'bg-yellow-100 text-yellow-800',
+          none: 'bg-slate-100 text-slate-600',
+        };
+        return (
+          <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${styles[status]}`}>
+            {status}
+          </span>
+        );
+      },
+    },
     {
       key: 'is_active',
       label: 'Active',

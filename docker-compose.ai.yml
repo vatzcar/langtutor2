@@ -106,6 +106,35 @@ services:
     networks:
       - ai-network
 
+  liveportrait:
+    build:
+      context: ./services/ai/liveportrait
+      dockerfile: Dockerfile
+    container_name: langtutor-liveportrait
+    restart: unless-stopped
+    ports:
+      - "8013:8000"
+    environment:
+      LIVEPORTRAIT_DEVICE: "cuda"
+      LIVEPORTRAIT_CHECKPOINT_DIR: "/app/checkpoints"
+    volumes:
+      - ai-models:/app/checkpoints
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - ai-network
+
 volumes:
   ai-models:
     name: langtutor-ai-models

@@ -17,3 +17,4 @@ from app.services import support_service as support
 from app.services import livekit_service as livekit
 from app.services import admin_role_service as admin_role
 from app.services import admin_user_service as admin_user
+from app.services import liveportrait_service as liveportrait

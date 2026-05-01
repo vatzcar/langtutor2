@@ -31,11 +31,13 @@ class Settings(BaseSettings):
     stt_base_url: str = "http://localhost:8010"
     tts_base_url: str = "http://localhost:8011"
     avatar_base_url: str = "http://localhost:8012"
+    liveportrait_base_url: str = "http://localhost:8013"
 
     # Default off — LivePortrait needs ~3.5 GB VRAM and may OOM on 8 GB
     # cards once STT + TTS are loaded. Flip on once you've verified
     # headroom with `nvidia-smi` during a call.
     avatar_enabled: bool = False
+    idle_loop_enabled: bool = False
 
     # Model names — change to trade latency for quality.
     stt_model: str = "Systran/faster-whisper-base.en"

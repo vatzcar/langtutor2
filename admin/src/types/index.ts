@@ -14,6 +14,8 @@ export type PersonaGender = 'male' | 'female' | 'nonbinary' | string;
 export type PersonaType = 'teacher' | 'coordinator' | 'peer';
 export type TeachingStyle = 'casual_friendly' | 'friendly_structured' | 'formal_structured';
 
+export type IdleLoopStatus = 'none' | 'pending' | 'ready';
+
 export interface Persona {
   id: string;
   name: string;
@@ -23,6 +25,8 @@ export interface Persona {
   teaching_style: TeachingStyle;
   is_active: boolean;
   image_url?: string | null;
+  idle_video_url?: string | null;
+  idle_loop_status?: IdleLoopStatus;
   created_at?: string;
   updated_at?: string;
 }
