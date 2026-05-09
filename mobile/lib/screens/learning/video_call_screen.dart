@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:livekit_client/livekit_client.dart';
 
 import '../../config/theme.dart';
 import '../../providers/session_provider.dart';
 import '../../providers/user_provider.dart';
+import '../../services/livekit_service.dart';
 import '../../widgets/bottom_nav_bar.dart';
 import '../../widgets/bubble_background.dart';
 
@@ -20,6 +22,9 @@ class VideoCallScreen extends ConsumerStatefulWidget {
 
 class _VideoCallScreenState extends ConsumerState<VideoCallScreen> {
   final List<String> _transcript = [];
+  final LiveKitService _liveKit = LiveKitService();
+  VideoTrack? _remoteVideoTrack;
+  EventsListener<RoomEvent>? _roomListener;
 
   @override
   void initState() {
@@ -27,8 +32,41 @@ class _VideoCallScreenState extends ConsumerState<VideoCallScreen> {
     _connectToLiveKit();
   }
 
+  @override
+  void dispose() {
+    _roomListener?.dispose();
+    _liveKit.disconnect();
+    super.dispose();
+  }
+
   Future<void> _connectToLiveKit() async {
-    // TODO: connect via LiveKitService with video enabled
+    final session = ref.read(sessionProvider);
+    final token = session?.livekitToken;
+    if (token == null || token.isEmpty) return;
+
+    final room = await _liveKit.connect(token, videoEnabled: false);
+
+    _roomListener = room.createListener();
+    _roomListener!
+      ..on<TrackSubscribedEvent>((event) {
+        if (event.track is VideoTrack) {
+          setState(() => _remoteVideoTrack = event.track as VideoTrack);
+        }
+      })
+      ..on<TrackUnsubscribedEvent>((event) {
+        if (event.track is VideoTrack) {
+          setState(() => _remoteVideoTrack = null);
+        }
+      });
+
+    // Check for already-subscribed video tracks.
+    for (final participant in room.remoteParticipants.values) {
+      for (final pub in participant.trackPublications.values) {
+        if (pub.track is VideoTrack && pub.subscribed) {
+          setState(() => _remoteVideoTrack = pub.track as VideoTrack);
+        }
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -89,11 +127,18 @@ class _VideoCallScreenState extends ConsumerState<VideoCallScreen> {
                     color: AppColors.navBg,
                     borderRadius: BorderRadius.circular(16),
                   ),
-                  alignment: Alignment.center,
-                  child: const Text(
-                    'AI Persona Video',
-                    style: TextStyle(color: Colors.white54, fontSize: 18),
-                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: _remoteVideoTrack != null
+                      ? VideoTrackRenderer(
+                          _remoteVideoTrack!,
+                          fit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                        )
+                      : const Center(
+                          child: CircularProgressIndicator(
+                            color: Colors.white38,
+                            strokeWidth: 2,
+                          ),
+                        ),
                 ),
               ),
 

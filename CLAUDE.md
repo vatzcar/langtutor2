@@ -161,15 +161,16 @@ Don't re-litigate these without strong reason; each has a scar behind it.
 
 ## 7. Known limits / stubs
 
-- `services/ai/avatar/app.py` **`/stream` WebSocket is a stub** — it
-  accepts and immediately returns `streaming_not_implemented`. Path 4
-  Phase 3 replaces this with a real streaming track.
-- Avatar inference is **subprocess-per-request** (`python -m
-  scripts.inference`). ~60–90 s wall time per 10 s of audio on a 4090
-  because of model load cost. Path 4 Phase 2 makes this a persistent
-  worker.
-- **LivePortrait service does not exist yet** — planned for Path 4
-  Phase 1 (per-persona idle-loop pre-render).
+- Avatar inference runs **one job at a time** on the GPU (single-worker
+  queue). Phase 4 benchmarks concurrency and tunes. The persistent
+  MuseTalk worker keeps models resident in VRAM — no per-request reload.
+- `services/ai/avatar/app.py` `/stream` WebSocket is the real-time
+  streaming path (Phase 3). It accepts a source config + WAV audio,
+  yields JPEG frames from `MuseTalkWorker.infer_streaming`.
+- `backend/app/ai/avatar_publisher.py` publishes a LiveKit `VideoTrack`
+  fed by idle-loop frames or live lip-synced frames from the avatar WS.
+- **LivePortrait service** runs on port 8013 (Phase 1) for offline
+  idle-loop generation.
 - Repo's `docker-compose.yml` is dev-only; see §6.
 
 ## 8. Pointers — where to read first
@@ -203,10 +204,13 @@ Don't re-litigate these without strong reason; each has a scar behind it.
 
 ## 10. Current focus / next task
 
-**Path 4 Phase 1 per `docs/path4-plan.md`.**
+**Path 4 Phase 4 (benchmarking + tuning) per `docs/path4-plan.md`.**
 
-Path 4 = per-persona pre-rendered idle loop (LivePortrait) + runtime
-real-time MuseTalk lip-sync overlaid on the loop. Expected ~15–20
-concurrent streams on one RTX 4090, amortizing to ~$0.01/min at 10+
-concurrent. See `docs/path4-plan.md` for staged plan with
-deliverables/verification per phase.
+Phases 1–3 are complete:
+- Phase 1: LivePortrait idle-loop generation (offline, admin-triggered).
+- Phase 2: persistent MuseTalk worker (in-process queue, no subprocess).
+- Phase 3: LiveKit WebRTC video track — avatar_publisher.py publishes
+  idle-loop frames and live lip-synced frames via the `/stream` WS.
+
+Next: run the concurrency sweep from Phase 4 to prove `< $0.02/min` at
+`>= 10` concurrent streams on the A6000.

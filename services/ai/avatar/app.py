@@ -315,18 +315,79 @@ async def job_delete(job_id: str) -> JSONResponse:
 
 @app.websocket("/stream")
 async def stream(ws: WebSocket) -> None:
-    """Real-time streaming — Phase 3 replaces this stub with a real protocol."""
+    """Real-time streaming inference over WebSocket.
+
+    Protocol:
+        1. Client sends text (JSON): ``{"source_path": "...", "bbox_shift": 0}``
+        2. Client sends binary: complete WAV audio bytes.
+        3. Server sends binary messages: one JPEG-encoded frame each.
+        4. Server sends text (JSON): ``{"type": "done", "frame_count": N, "fps": F}``
+
+    On error the server sends ``{"type": "error", "error": "..."}`` and closes.
+    """
     await ws.accept()
-    try:
-        await ws.send_json(
-            {
-                "error": "streaming_not_implemented",
-                "hint": "Use POST /render or /render_async for one-shot mode.",
-            }
-        )
-    except Exception:  # noqa: BLE001
-        pass
-    try:
+
+    if state.worker is None:
+        await ws.send_json({"type": "error", "error": state.worker_error or "worker unavailable"})
         await ws.close(code=1011)
-    except Exception:  # noqa: BLE001
-        pass
+        return
+
+    workdir = Path(tempfile.mkdtemp(prefix="stream-"))
+    try:
+        config_msg = await ws.receive_json()
+        source_path = Path(config_msg["source_path"])
+        bbox_shift = int(config_msg.get("bbox_shift", 0))
+
+        audio_data = await ws.receive_bytes()
+        audio_path = workdir / "audio.wav"
+        audio_path.write_bytes(audio_data)
+
+        loop = asyncio.get_event_loop()
+        frame_queue: asyncio.Queue = asyncio.Queue(maxsize=64)
+
+        def _run_inference() -> None:
+            import cv2
+            try:
+                for frame_bgr, fps in state.worker.infer_streaming(  # type: ignore[union-attr]
+                    audio_path=audio_path,
+                    source_path=source_path,
+                    bbox_shift=bbox_shift,
+                ):
+                    ok, jpeg = cv2.imencode(".jpg", frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                    if ok:
+                        loop.call_soon_threadsafe(frame_queue.put_nowait, (jpeg.tobytes(), fps))
+                loop.call_soon_threadsafe(frame_queue.put_nowait, None)
+            except Exception as exc:  # noqa: BLE001
+                loop.call_soon_threadsafe(
+                    frame_queue.put_nowait, RuntimeError(str(exc)),
+                )
+
+        loop.run_in_executor(None, _run_inference)
+
+        frame_count = 0
+        result_fps = 25
+        while True:
+            item = await frame_queue.get()
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                await ws.send_json({"type": "error", "error": str(item)})
+                await ws.close(code=1011)
+                return
+            jpeg_bytes, result_fps = item
+            await ws.send_bytes(jpeg_bytes)
+            frame_count += 1
+
+        await ws.send_json({"type": "done", "frame_count": frame_count, "fps": result_fps})
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("stream error")
+        try:
+            await ws.send_json({"type": "error", "error": repr(exc)})
+        except Exception:  # noqa: BLE001
+            pass
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+        try:
+            await ws.close()
+        except Exception:  # noqa: BLE001
+            pass

@@ -17,7 +17,7 @@ import io
 import logging
 import wave
 from dataclasses import dataclass
-from typing import AsyncIterable, Optional
+from typing import AsyncIterable, Awaitable, Callable, Optional
 
 import httpx
 from livekit import rtc
@@ -61,12 +61,20 @@ class FishSpeechTTS(tts.TTS):
             sample_rate=sample_rate,
         )
         self._client = httpx.AsyncClient(timeout=self._opts.request_timeout)
+        self._audio_listeners: list[Callable[[bytes], Awaitable[None]]] = []
+
+    def add_audio_listener(self, callback: Callable[[bytes], Awaitable[None]]) -> None:
+        """Register a callback invoked with raw WAV bytes after each synthesis."""
+        self._audio_listeners.append(callback)
 
     async def aclose(self) -> None:
         await self._client.aclose()
 
     def synthesize(self, text: str) -> "_FishSpeechChunkedStream":
-        return _FishSpeechChunkedStream(tts_impl=self, text=text, opts=self._opts)
+        return _FishSpeechChunkedStream(
+            tts_impl=self, text=text, opts=self._opts,
+            audio_listeners=self._audio_listeners,
+        )
 
     async def _request(self, text: str) -> bytes:
         payload: dict = {"text": text}
@@ -101,14 +109,19 @@ class _FishSpeechChunkedStream(tts.ChunkedStream):
         tts_impl: FishSpeechTTS,
         text: str,
         opts: FishSpeechTTSOptions,
+        audio_listeners: list[Callable[[bytes], Awaitable[None]]] | None = None,
     ) -> None:
         super().__init__()
         self._tts = tts_impl
         self._text = text
         self._opts = opts
+        self._audio_listeners = audio_listeners or []
 
     async def _main_task(self) -> None:
         audio_bytes = await self._tts._request(self._text)
+
+        for listener in self._audio_listeners:
+            asyncio.create_task(listener(audio_bytes))
         pcm, sample_rate = _decode_wav(audio_bytes, fallback_rate=self._opts.sample_rate)
 
         frame = rtc.AudioFrame(

@@ -4,6 +4,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.persona import Persona
 from app.models.session import ChatMessage, Session, SessionTranscript
 
 
@@ -177,7 +178,12 @@ async def get_session_context(db: AsyncSession, session_id: UUID) -> dict | None
     transcripts = await get_session_transcript(db, session_id)
     messages = await get_chat_messages(db, session_id)
 
-    return {
+    persona_result = await db.execute(
+        select(Persona).where(Persona.id == session.persona_id)
+    )
+    persona = persona_result.scalar_one_or_none()
+
+    ctx: dict = {
         "session_id": str(session.id),
         "user_id": str(session.user_id),
         "session_type": session.session_type,
@@ -186,6 +192,11 @@ async def get_session_context(db: AsyncSession, session_id: UUID) -> dict | None
         "transcript_count": len(transcripts),
         "message_count": len(messages),
     }
+    if persona:
+        ctx["persona_id"] = str(persona.id)
+        ctx["persona_image_url"] = persona.image_url
+        ctx["persona_idle_video_url"] = persona.idle_video_url
+    return ctx
 
 
 async def add_transcript_entry(
