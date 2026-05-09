@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import copy
 import glob
+import hashlib
 import logging
 import os
 import shutil
@@ -156,10 +157,20 @@ class MuseTalkWorker:
         from musetalk.utils.utils import get_file_type, get_video_fps
         import cv2
 
+        # Cache by *content* hash, not path: the avatar service receives
+        # uploads into a fresh tempdir per request, so the path changes every
+        # time even when the persona's idle-loop MP4 is byte-identical.
+        # Content hash + size keys hit across all those copies and is the
+        # whole point of the cache (re-extracting landmarks for 550 frames
+        # is ~50 s on a 4090).
         cache_key = None
         try:
             stat = source_path.stat()
-            cache_key = f"{source_path}|{stat.st_size}|{stat.st_mtime_ns}|{bbox_shift}|{extra_margin}"
+            h = hashlib.blake2b(digest_size=16)
+            with open(source_path, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
+            cache_key = f"{h.hexdigest()}|{stat.st_size}|{bbox_shift}|{extra_margin}|{self.version}"
         except OSError:
             pass
 
