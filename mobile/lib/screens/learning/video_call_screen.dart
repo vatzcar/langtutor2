@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:livekit_client/livekit_client.dart';
 
 import '../../config/theme.dart';
 import '../../providers/session_provider.dart';
 import '../../providers/user_provider.dart';
+import '../../services/livekit_service.dart';
 import '../../widgets/bottom_nav_bar.dart';
 import '../../widgets/bubble_background.dart';
 
@@ -20,6 +22,10 @@ class VideoCallScreen extends ConsumerStatefulWidget {
 
 class _VideoCallScreenState extends ConsumerState<VideoCallScreen> {
   final List<String> _transcript = [];
+  final LiveKitService _lkService = LiveKitService();
+  RemoteParticipant? _remoteParticipant;
+  VideoTrack? _remoteVideoTrack;
+  bool _connected = false;
 
   @override
   void initState() {
@@ -27,8 +33,54 @@ class _VideoCallScreenState extends ConsumerState<VideoCallScreen> {
     _connectToLiveKit();
   }
 
+  @override
+  void dispose() {
+    _lkService.disconnect();
+    super.dispose();
+  }
+
   Future<void> _connectToLiveKit() async {
-    // TODO: connect via LiveKitService with video enabled
+    final session = ref.read(sessionProvider);
+    final token = session?.livekitToken;
+    if (token == null || token.isEmpty) return;
+
+    try {
+      final room = await _lkService.connect(token, videoEnabled: false);
+
+      room.addListener(_onRoomEvent);
+
+      // Check if remote participant already exists
+      _checkRemoteParticipant();
+
+      if (mounted) setState(() => _connected = true);
+    } catch (e) {
+      debugPrint('LiveKit connect failed: $e');
+    }
+  }
+
+  void _onRoomEvent() {
+    _checkRemoteParticipant();
+  }
+
+  void _checkRemoteParticipant() {
+    final participant = _lkService.remoteParticipant;
+    if (participant == null) return;
+
+    final videoTracks = participant.videoTrackPublications;
+    VideoTrack? track;
+    for (final pub in videoTracks) {
+      if (pub.track != null && pub.subscribed) {
+        track = pub.track as VideoTrack?;
+        break;
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _remoteParticipant = participant;
+        _remoteVideoTrack = track;
+      });
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -89,11 +141,29 @@ class _VideoCallScreenState extends ConsumerState<VideoCallScreen> {
                     color: AppColors.navBg,
                     borderRadius: BorderRadius.circular(16),
                   ),
-                  alignment: Alignment.center,
-                  child: const Text(
-                    'AI Persona Video',
-                    style: TextStyle(color: Colors.white54, fontSize: 18),
-                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: _remoteVideoTrack != null
+                      ? VideoTrackRenderer(
+                          _remoteVideoTrack!,
+                          fit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                        )
+                      : const Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              CircularProgressIndicator(
+                                color: AppColors.primary,
+                                strokeWidth: 2,
+                              ),
+                              SizedBox(height: 12),
+                              Text(
+                                'Connecting...',
+                                style: TextStyle(
+                                    color: Colors.white54, fontSize: 14),
+                              ),
+                            ],
+                          ),
+                        ),
                 ),
               ),
 

@@ -152,16 +152,15 @@ Don't re-litigate these without strong reason; each has a scar behind it.
 
 ## 7. Known limits / stubs
 
-- `services/ai/avatar/app.py` **`/stream` WebSocket is a stub** — it
-  accepts and immediately returns `streaming_not_implemented`. Path 4
-  Phase 3 replaces this with a real streaming track.
 - Avatar inference is **subprocess-per-request** (`python -m
   scripts.inference`). ~60–90 s wall time per 10 s of audio on a 4090
   because of model load cost. Path 4 Phase 2 makes this a persistent
   worker.
-- **LivePortrait service does not exist yet** — planned for Path 4
-  Phase 1 (per-persona idle-loop pre-render).
 - Repo's `docker-compose.yml` is dev-only; see §6.
+- Phase 4 benchmarks show **batch render RTF = 2.5** on RTX A6000
+  (cost $0.031/min, above $0.02 target). CPU-bound work (blending,
+  frame I/O, ffmpeg encode) dominates — GPU util only 5–10%.
+  Phase 3 streaming eliminates frame I/O + ffmpeg overhead.
 
 ## 8. Pointers — where to read first
 
@@ -194,10 +193,17 @@ Don't re-litigate these without strong reason; each has a scar behind it.
 
 ## 10. Current focus / next task
 
-**Path 4 Phase 1 per `docs/path4-plan.md`.**
+**Path 4 Phases 1–4 complete.** Phase 3 streaming + Phase 4 benchmarks
+landed. Next: deploy Phase 3 streaming to server and re-run benchmarks
+to measure the RTF improvement from eliminating frame I/O + ffmpeg
+encode overhead.
 
-Path 4 = per-persona pre-rendered idle loop (LivePortrait) + runtime
-real-time MuseTalk lip-sync overlaid on the loop. Expected ~15–20
-concurrent streams on one RTX 4090, amortizing to ~$0.01/min at 10+
-concurrent. See `docs/path4-plan.md` for staged plan with
-deliverables/verification per phase.
+Key files added in Phase 3:
+- `backend/app/ai/avatar_publisher.py` — LiveKit video-track publisher
+- `services/ai/avatar/worker.py` `infer_streaming()` — yields frames
+  via callback instead of writing to disk
+- `services/ai/avatar/app.py` `/stream` WebSocket — real streaming
+  protocol replacing the former stub
+
+See `docs/path4-plan.md` for the full staged plan and
+`docs/avatar-benchmarks.md` for Phase 4 benchmark results.

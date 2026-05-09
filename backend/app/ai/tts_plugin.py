@@ -48,6 +48,7 @@ class FishSpeechTTS(tts.TTS):
         reference_audio_b64: Optional[str] = None,
         reference_text: Optional[str] = None,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
+        on_audio: Optional[callable] = None,
     ) -> None:
         super().__init__(
             capabilities=tts.TTSCapabilities(streaming=False),
@@ -61,6 +62,7 @@ class FishSpeechTTS(tts.TTS):
             sample_rate=sample_rate,
         )
         self._client = httpx.AsyncClient(timeout=self._opts.request_timeout)
+        self._on_audio = on_audio
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -89,6 +91,11 @@ class FishSpeechTTS(tts.TTS):
                 resp.raise_for_status()
             else:
                 raise
+        if self._on_audio is not None:
+            try:
+                await self._on_audio(resp.content)
+            except Exception:  # noqa: BLE001
+                logger.exception("on_audio callback failed")
         return resp.content
 
 

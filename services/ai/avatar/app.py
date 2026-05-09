@@ -315,18 +315,98 @@ async def job_delete(job_id: str) -> JSONResponse:
 
 @app.websocket("/stream")
 async def stream(ws: WebSocket) -> None:
-    """Real-time streaming — Phase 3 replaces this stub with a real protocol."""
+    """Real-time streaming: client sends source + audio, server sends JPEG frames.
+
+    Protocol (all messages are WebSocket text or binary):
+      1. Client text:  {"type": "init", "source_name": "idle.mp4"}
+      2. Client binary: source video/image bytes
+      3. Server text:  {"type": "ready", "fps": 25}
+      4. Client text:  {"type": "audio"}
+      5. Client binary: WAV audio bytes
+      6. Server binary: JPEG frame (repeated, one per frame)
+      7. Server text:  {"type": "done", "frame_count": N}
+      Repeat from step 4 for next utterance.
+      Client text: {"type": "close"} to end.
+    """
     await ws.accept()
-    try:
-        await ws.send_json(
-            {
-                "error": "streaming_not_implemented",
-                "hint": "Use POST /render or /render_async for one-shot mode.",
-            }
-        )
-    except Exception:  # noqa: BLE001
-        pass
-    try:
+    if state.worker is None:
+        await ws.send_json({"type": "error", "message": state.worker_error or "worker unavailable"})
         await ws.close(code=1011)
-    except Exception:  # noqa: BLE001
-        pass
+        return
+
+    source_path: Optional[Path] = None
+    workdir = Path(tempfile.mkdtemp(prefix="musetalk-stream-"))
+    loop = asyncio.get_event_loop()
+
+    try:
+        # Phase 1: receive source
+        init_msg = await ws.receive_json()
+        if init_msg.get("type") != "init":
+            await ws.send_json({"type": "error", "message": "expected init message"})
+            return
+
+        source_name = init_msg.get("source_name", "source.mp4")
+        source_data = await ws.receive_bytes()
+        source_path = workdir / source_name
+        source_path.write_bytes(source_data)
+
+        fps = await loop.run_in_executor(None, state.worker.get_source_fps, source_path)
+        await loop.run_in_executor(None, state.worker.preload_source, source_path)
+        await ws.send_json({"type": "ready", "fps": fps})
+
+        # Phase 2: streaming loop — receive audio, send frames
+        while True:
+            msg = await ws.receive_json()
+            msg_type = msg.get("type")
+
+            if msg_type == "close":
+                break
+
+            if msg_type != "audio":
+                await ws.send_json({"type": "error", "message": f"expected audio or close, got {msg_type}"})
+                continue
+
+            audio_data = await ws.receive_bytes()
+            audio_path = workdir / "utterance.wav"
+            audio_path.write_bytes(audio_data)
+
+            frame_queue: asyncio.Queue = asyncio.Queue()
+
+            def _on_frame(frame, idx, frame_fps):
+                import cv2
+                _, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                loop.call_soon_threadsafe(frame_queue.put_nowait, jpeg.tobytes())
+
+            def _run_inference():
+                state.worker.infer_streaming(
+                    audio_path=audio_path,
+                    source_path=source_path,
+                    frame_callback=_on_frame,
+                )
+                loop.call_soon_threadsafe(frame_queue.put_nowait, None)
+
+            inference_task = loop.run_in_executor(None, _run_inference)
+
+            frame_count = 0
+            while True:
+                jpeg_bytes = await frame_queue.get()
+                if jpeg_bytes is None:
+                    break
+                await ws.send_bytes(jpeg_bytes)
+                frame_count += 1
+
+            await inference_task
+            await ws.send_json({"type": "done", "frame_count": frame_count})
+
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("stream error")
+        try:
+            await ws.send_json({"type": "error", "message": repr(exc)})
+        except Exception:  # noqa: BLE001
+            pass
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+        try:
+            await ws.close()
+        except Exception:  # noqa: BLE001
+            pass

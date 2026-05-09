@@ -136,6 +136,16 @@ class MuseTalkWorker:
 
         logger.info("MuseTalkWorker ready (dtype=%s)", self._weight_dtype)
 
+    # --------------------------------------------------------- frame metadata
+
+    @staticmethod
+    def get_source_fps(source_path: Path) -> int:
+        from musetalk.utils.utils import get_file_type, get_video_fps
+        ftype = get_file_type(str(source_path))
+        if ftype == "video":
+            return get_video_fps(str(source_path))
+        return 25
+
     # ------------------------------------------------------------------ utils
 
     def _extract_source(
@@ -363,3 +373,103 @@ class MuseTalkWorker:
             pass
 
         return out_path
+
+    def infer_streaming(
+        self,
+        audio_path: Path,
+        source_path: Path,
+        bbox_shift: int = 0,
+        extra_margin: int = 10,
+        batch_size: int = 8,
+        audio_padding_left: int = 2,
+        audio_padding_right: int = 2,
+        parsing_mode: str = "jaw",
+        fps_fallback: int = 25,
+        frame_callback=None,
+    ) -> list:
+        """Yield blended BGR frames via callback instead of writing to disk.
+
+        When ``frame_callback`` is provided, each blended BGR numpy array is
+        passed to ``frame_callback(frame, index, fps)`` as soon as it's ready.
+        This eliminates the PNG write + ffmpeg encode overhead that dominates
+        the batch pipeline (~50% of wall time).
+
+        Returns the list of all frames (for callers that still want them).
+        """
+        import cv2
+        import numpy as np
+        import torch
+        from musetalk.utils.blending import get_image
+        from musetalk.utils.utils import datagen
+
+        with self._lock, torch.no_grad():
+            coord_list, frame_list, input_latent_list, fps = self._extract_source(
+                source_path, source_path.parent, bbox_shift, extra_margin, fps_fallback,
+            )
+
+            whisper_input_features, librosa_length = self.audio_processor.get_audio_feature(
+                str(audio_path),
+            )
+            whisper_chunks = self.audio_processor.get_whisper_chunk(
+                whisper_input_features,
+                self._torch_device,
+                self._weight_dtype,
+                self.whisper,
+                librosa_length,
+                fps=fps,
+                audio_padding_length_left=audio_padding_left,
+                audio_padding_length_right=audio_padding_right,
+            )
+
+            frame_list_cycle = frame_list + frame_list[::-1]
+            coord_list_cycle = coord_list + coord_list[::-1]
+            input_latent_list_cycle = input_latent_list + input_latent_list[::-1]
+
+            gen = datagen(
+                whisper_chunks=whisper_chunks,
+                vae_encode_latents=input_latent_list_cycle,
+                batch_size=batch_size,
+                delay_frame=0,
+                device=self._torch_device,
+            )
+
+            all_frames: list = []
+            frame_idx = 0
+
+            for whisper_batch, latent_batch in gen:
+                audio_feature_batch = self.pe(whisper_batch)
+                latent_batch = latent_batch.to(dtype=self._weight_dtype)
+                pred_latents = self.unet.model(
+                    latent_batch,
+                    self._timesteps,
+                    encoder_hidden_states=audio_feature_batch,
+                ).sample
+                recon = self.vae.decode_latents(pred_latents)
+
+                for res_frame in recon:
+                    bbox = coord_list_cycle[frame_idx % len(coord_list_cycle)]
+                    ori_frame = copy.deepcopy(frame_list_cycle[frame_idx % len(frame_list_cycle)])
+                    x1, y1, x2, y2 = bbox
+                    if self.version == "v15":
+                        y2 = min(y2 + extra_margin, ori_frame.shape[0])
+                    try:
+                        res_frame = cv2.resize(res_frame.astype(np.uint8), (x2 - x1, y2 - y1))
+                    except Exception:  # noqa: BLE001
+                        frame_idx += 1
+                        continue
+                    if self.version == "v15":
+                        combined = get_image(
+                            ori_frame, res_frame, [x1, y1, x2, y2],
+                            mode=parsing_mode, fp=self.face_parser,
+                        )
+                    else:
+                        combined = get_image(
+                            ori_frame, res_frame, [x1, y1, x2, y2], fp=self.face_parser,
+                        )
+
+                    all_frames.append(combined)
+                    if frame_callback is not None:
+                        frame_callback(combined, frame_idx, fps)
+                    frame_idx += 1
+
+        return all_frames
