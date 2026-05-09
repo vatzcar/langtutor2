@@ -157,10 +157,10 @@ Don't re-litigate these without strong reason; each has a scar behind it.
   because of model load cost. Path 4 Phase 2 makes this a persistent
   worker.
 - Repo's `docker-compose.yml` is dev-only; see §6.
-- Phase 4 benchmarks show **batch render RTF = 2.5** on RTX A6000
-  (cost $0.031/min, above $0.02 target). CPU-bound work (blending,
-  frame I/O, ffmpeg encode) dominates — GPU util only 5–10%.
-  Phase 3 streaming eliminates frame I/O + ffmpeg overhead.
+- Benchmarks on RTX A6000: **batch RTF = 2.575** ($0.034/min),
+  **streaming RTF = 2.119** ($0.028/min) — 18% improvement but still
+  above the $0.02/min target. Face blending (CPU-bound) is now the
+  dominant bottleneck. GPU-accelerated blending is needed next.
 
 ## 8. Pointers — where to read first
 
@@ -193,17 +193,16 @@ Don't re-litigate these without strong reason; each has a scar behind it.
 
 ## 10. Current focus / next task
 
-**Path 4 Phases 1–4 complete.** Phase 3 streaming + Phase 4 benchmarks
-landed. Next: deploy Phase 3 streaming to server and re-run benchmarks
-to measure the RTF improvement from eliminating frame I/O + ffmpeg
-encode overhead.
+**Path 4 Phases 1–4 complete. Streaming deployed and benchmarked.**
 
-Key files added in Phase 3:
-- `backend/app/ai/avatar_publisher.py` — LiveKit video-track publisher
-- `services/ai/avatar/worker.py` `infer_streaming()` — yields frames
-  via callback instead of writing to disk
-- `services/ai/avatar/app.py` `/stream` WebSocket — real streaming
-  protocol replacing the former stub
+Streaming RTF = 2.119 (18% better than batch 2.575) but cost target
+of $0.02/min is NOT met ($0.028/min actual). First-frame latency
+350–460 ms passes the <500 ms target.
 
-See `docs/path4-plan.md` for the full staged plan and
-`docs/avatar-benchmarks.md` for Phase 4 benchmark results.
+Next steps to reach cost target:
+1. GPU-accelerated face blending (replace CPU OpenCV with CUDA/torch)
+2. Eliminate per-frame JPEG encode (raw RGBA or shared memory)
+3. TensorRT compilation of UNet + VAE
+
+See `docs/avatar-benchmarks.md` for full benchmark results and
+tuning roadmap.
