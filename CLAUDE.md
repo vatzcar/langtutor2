@@ -63,11 +63,15 @@ REQUIREMENTS.md          Product spec. Source of truth for features.
 
 ## 4. Deployed environment
 
-Dev / pilot on TensorDock, **RTX 4090 (24 GB VRAM)**, Ubuntu 22.04.
+### Active server (A6000)
 
-- SSH: `ssh -i $USERPROFILE/.ssh/id_ed25519 user@38.224.253.71`
-- Public IP `38.224.253.71`, plain HTTP, **no domain yet**.
-- All containers healthy at last check.
+Dev / pilot on TensorDock, **RTX A6000 (48 GB VRAM)**, Ubuntu 24.04.
+
+- SSH: `ssh -i $USERPROFILE/.ssh/id_ed25519 user@38.224.253.247`
+- Public IP `38.224.253.247`, plain HTTP, **no domain yet**.
+- Compose files: `docker-compose.prod.yml` (core) + `docker-compose.ai.yml` (GPU).
+- Core stack start: `docker compose --env-file .env.prod -f docker-compose.prod.yml up -d`
+- AI stack start: `docker compose -f docker-compose.ai.yml up -d`
 
 | Container           | Image / build              | Host port     | Internal |
 | ------------------- | -------------------------- | ------------- | -------- |
@@ -81,9 +85,16 @@ Dev / pilot on TensorDock, **RTX 4090 (24 GB VRAM)**, Ubuntu 22.04.
 Networks:
 - `langtutor_default` — db + backend + livekit.
 - `langtutor-ai-network` — stt + tts + avatar.
-- **Backend is attached to both** so it can resolve `stt`, `tts`, `avatar`
-  by hostname. This dual-attach is done via a manual edit to the server's
-  `docker-compose.yml`; it's **not** in the repo (see §6).
+- **Backend is attached to both** via `docker-compose.prod.yml` which
+  declares `langtutor-ai-network` as an external network on the backend
+  service. The AI compose file creates the network.
+
+### Inactive server (4090) — unavailable as of 2026-05-09
+
+- SSH: `ssh -i $USERPROFILE/.ssh/id_ed25519 user@38.224.253.71`
+- RTX 4090 (24 GB VRAM), Ubuntu 22.04.
+- Last known state: containers healthy, but server is unreachable.
+- Server's `docker-compose.yml` had diverged from repo (manual edits).
 
 ## 5. Key env vars
 
@@ -137,13 +148,13 @@ Don't re-litigate these without strong reason; each has a scar behind it.
 - **`LANGTUTOR_AVATAR_ENABLED`** is the feature gate. The tutor agent
   (`backend/app/ai/agent_worker.py`) reads it and only calls the avatar
   service when true. Default is off.
-- **Server's `docker-compose.yml` has diverged from the repo's.** On the
-  server it has: bind-mount of `./backend` into the backend container,
-  `${DB_PASSWORD}` interpolation for postgres, and a second network entry
-  attaching backend to `langtutor-ai-network`. The repo's version is
-  still the minimal dev-laptop compose. **Do not try to reconcile yet** —
-  we'll fold this in when we productionise. When editing compose locally,
-  be aware the server's file is the authoritative one for prod.
+- **A6000 server uses `docker-compose.prod.yml`** (committed to repo) for
+  the core stack, alongside the existing `docker-compose.ai.yml` for GPU
+  services. The prod compose handles DB_PASSWORD interpolation from
+  `.env.prod`, backend dual-network attachment, and bind-mount of `./backend`.
+  The dev `docker-compose.yml` is unchanged and used only for local dev.
+  The old 4090 server had a diverged `docker-compose.yml` — that server is
+  currently unavailable.
 - **docker-compose.ai.yml's `avatar` service still has env vars named
   `LIVEPORTRAIT_*`** even though the service is now MuseTalk. Harmless
   (shim ignores them) but worth cleaning up when touching that file.

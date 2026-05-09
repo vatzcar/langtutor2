@@ -10,7 +10,7 @@ ARG CUDA_TAG=12.1.1-cudnn8-devel-ubuntu22.04
 FROM nvidia/cuda:${CUDA_TAG}
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG LIVEPORTRAIT_REF=v0.5.0
+ARG LIVEPORTRAIT_REF=main
 
 # ── System deps ──────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
