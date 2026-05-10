@@ -88,10 +88,15 @@ def test_encode_basic():
         assert vs.get("width") == 256, f"unexpected width: {vs.get('width')}"
         assert vs.get("height") == 256, f"unexpected height: {vs.get('height')}"
 
-        # nb_frames may be absent for some containers; fall back to duration check.
         nb_frames = vs.get("nb_frames")
         if nb_frames is not None:
             assert int(nb_frames) == 30, f"expected 30 frames, got {nb_frames}"
+        else:
+            # Some MP4 containers omit nb_frames; fall back to duration*fps
+            duration = float(vs.get("duration", 0))
+            assert abs(duration * 25 - 30) < 1, (
+                f"frame-count fallback: duration={duration}, expected ~1.2s"
+            )
 
 
 def test_encode_with_audio():
@@ -124,6 +129,32 @@ def test_encode_empty_raises():
             encode_frames_to_mp4([], out)
 
 
+def test_encode_warns_on_large_buffer(caplog):
+    """Warning is emitted when the pre-allocated frame buffer exceeds 500 MB."""
+    # 256x256x3 = 196 608 bytes per frame.  ceil(500 MB / 196 608) = 2685 frames.
+    # Use 2700 frames (just over threshold) but tiny frames to keep the test fast.
+    # We mock the join to avoid actually allocating 500 MB in CI.
+    import unittest.mock as mock
+
+    frames = _make_gradient_frames(count=1, height=256, width=256)
+
+    # Patch frames[0].nbytes to a large value so the threshold fires without
+    # needing hundreds of real frames.
+    big_frame = mock.MagicMock(spec=frames[0])
+    big_frame.nbytes = 600 * 1024 * 1024  # 600 MB > 500 MB threshold
+    big_frame.shape = frames[0].shape
+    big_frame.tobytes.return_value = frames[0].tobytes()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out = Path(tmpdir) / "big.mp4"
+        with caplog.at_level("WARNING", logger="avatar.pipe_encoder"):
+            encode_frames_to_mp4([big_frame], out, fps=25)
+
+    assert any(
+        "pre-allocating" in r.message for r in caplog.records
+    ), f"expected large-buffer warning; got records: {[r.message for r in caplog.records]}"
+
+
 def test_encode_mismatched_sizes_raises():
     """Frames with differing shapes must raise an exception."""
     frame_a = np.zeros((256, 256, 3), dtype=np.uint8)
@@ -131,5 +162,5 @@ def test_encode_mismatched_sizes_raises():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         out = Path(tmpdir) / "mismatched.mp4"
-        with pytest.raises((ValueError, AssertionError)):
+        with pytest.raises(ValueError):
             encode_frames_to_mp4([frame_a, frame_b], out)

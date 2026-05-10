@@ -16,7 +16,7 @@ Pipeline (mirrors `MuseTalk/scripts/inference.py`):
     6. (per request) vae.get_latents_for_unet for each crop
     7. (per request) batched UNet forward + vae.decode_latents
     8. (per request) blend predictions back into source frames
-    9. (per request) ffmpeg img2video -> ffmpeg audio mux
+    9. (per request) pipe_encoder: stream frames to ffmpeg stdin, mux audio
 
 The Phase 3 streaming path will reuse the loaded models from this same
 class (see `infer_streaming` placeholder).
@@ -36,6 +36,8 @@ import os
 import threading
 from pathlib import Path
 from typing import Optional
+
+from pipe_encoder import encode_frames_to_mp4
 
 logger = logging.getLogger("avatar.worker")
 
@@ -340,7 +342,10 @@ class MuseTalkWorker:
         # ffmpeg is CPU-bound, the GPU is free for the next job.
         out_name = result_name or "result.mp4"
         out_path = output_dir / out_name
-        from pipe_encoder import encode_frames_to_mp4
+        # Encode + audio mux in a single ffmpeg subprocess (no temp video file).
+        # pipe_encoder defaults to libx264 -preset ultrafast: tutor sessions are
+        # encode-time-sensitive, and the size penalty (~40% over -preset medium)
+        # is acceptable on the dev backend. Task 4 may flip use_nvenc=True.
         encode_frames_to_mp4(
             frames=blended_frames,
             output_path=out_path,

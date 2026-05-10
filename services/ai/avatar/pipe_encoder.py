@@ -11,11 +11,14 @@ encode_frames_to_mp4(frames, output_path, fps, audio_path, crf, use_nvenc)
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
+
+logger = logging.getLogger("avatar.pipe_encoder")
 
 
 def encode_frames_to_mp4(
@@ -114,6 +117,15 @@ def encode_frames_to_mp4(
         + [str(output_path)]
     )
 
+    # Warn before a large pre-allocation to make RSS spikes observable in logs.
+    est_bytes = len(frames) * frames[0].nbytes
+    if est_bytes > 500 * 1024 * 1024:
+        logger.warning(
+            "pipe_encoder: pre-allocating %.1f GB for %d frames (RSS spike); "
+            "streaming-write path is a future optimization for long clips",
+            est_bytes / 1e9, len(frames),
+        )
+
     # Concatenate all frame bytes into one buffer, then feed via communicate().
     # This avoids the "flush of closed file" error that arises when manually
     # closing stdin before calling communicate() on Python 3.10.
@@ -130,6 +142,11 @@ def encode_frames_to_mp4(
     rc = proc.returncode
 
     if rc != 0:
+        # Remove any partial / corrupt output so a retry doesn't serve stale bytes
+        try:
+            output_path.unlink(missing_ok=True)
+        except OSError:
+            pass
         stderr_text = stderr_bytes.decode("utf-8", errors="replace")
         raise RuntimeError(
             f"ffmpeg exited with code {rc}.\nCommand: {' '.join(cmd)}\n"
