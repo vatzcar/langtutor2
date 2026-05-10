@@ -69,14 +69,12 @@ COPY requirements.txt /app/shim-requirements.txt
 RUN pip install -r /app/shim-requirements.txt
 
 # Shim code.
-COPY app.py /app/app.py
-COPY worker.py /app/worker.py
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # /app/src is bind-mounted from the host during dev so code changes take
-# effect with a container restart (no image rebuild). The image-only fallback
-# copies the same files here so the image works without the bind-mount.
+# effect with a container restart (no image rebuild). These copies make the
+# image self-contained when no bind-mount is present.
 RUN mkdir -p /app/src
 COPY app.py /app/src/app.py
 COPY worker.py /app/src/worker.py
