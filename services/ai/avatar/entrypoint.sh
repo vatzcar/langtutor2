@@ -83,4 +83,4 @@ else
 fi
 
 echo "[entrypoint] Starting avatar API on :${PORT}"
-exec python -m uvicorn app:app --host 0.0.0.0 --port "${PORT}" --app-dir /app
+exec python -m uvicorn app:app --host 0.0.0.0 --port "${PORT}" --app-dir /app/src

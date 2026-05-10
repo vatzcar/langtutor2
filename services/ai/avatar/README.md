@@ -73,6 +73,20 @@ docker compose -f docker-compose.ai.yml build avatar
    `hf-mirror.com` (China). The entrypoint patches it to `huggingface.co`
    before first run.
 
+## Dev iteration loop
+
+The server bind-mounts `services/ai/avatar/` into the container at `/app/src`
+(see `docker-compose.ai.yml` `volumes:` for the avatar service). This means
+you can iterate on `app.py` / `worker.py` without a full image rebuild:
+
+1. Edit locally.
+2. Rsync to server: `rsync -av services/ai/avatar/ user@SERVER:~/langtutor/services/ai/avatar/`
+3. Restart the container (no rebuild): `docker compose -f docker-compose.ai.yml restart avatar`
+4. Run tests: `docker exec langtutor-avatar pytest /app/src/test_*.py -v`
+
+Only rebuild the image when changing `Dockerfile`, `entrypoint.sh`, or
+`requirements.txt`.
+
 ## Testing
 
 ```bash

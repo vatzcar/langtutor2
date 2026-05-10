@@ -74,7 +74,14 @@ COPY worker.py /app/worker.py
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-ENV PYTHONPATH=/app/MuseTalk:/app
+# /app/src is bind-mounted from the host during dev so code changes take
+# effect with a container restart (no image rebuild). The image-only fallback
+# copies the same files here so the image works without the bind-mount.
+RUN mkdir -p /app/src
+COPY app.py /app/src/app.py
+COPY worker.py /app/src/worker.py
+
+ENV PYTHONPATH=/app/src:/app/MuseTalk:/app
 ENV MUSETALK_REPO_DIR=/app/MuseTalk
 ENV MUSETALK_MODELS_DIR=/app/MuseTalk/models
 ENV MUSETALK_VERSION=v15
