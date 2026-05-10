@@ -29,7 +29,6 @@ machines without a GPU can still load the FastAPI shim.
 
 from __future__ import annotations
 
-import copy
 import glob
 import hashlib
 import logging
@@ -258,8 +257,9 @@ class MuseTalkWorker:
         import cv2
         import numpy as np
         import torch
-        from musetalk.utils.blending import get_image
         from musetalk.utils.utils import datagen
+
+        from gpu_blend import gpu_blend_batch
 
         output_dir.mkdir(parents=True, exist_ok=True)
         frames_save_dir = output_dir / "frames"
@@ -313,26 +313,41 @@ class MuseTalkWorker:
                 for res_frame in recon:
                     res_frame_list.append(res_frame)
 
-            # Blend predicted face crops back into source frames.
+            # Blend predicted face crops back into source frames (GPU-accelerated).
+            n = len(res_frame_list)
+            cycle_len = len(coord_list_cycle)
+
+            # Build per-frame input lists.  For v15 the y2 extra_margin is applied
+            # here (same as the old loop) before passing to gpu_blend_batch so the
+            # bbox semantics match what get_image always expected.
+            ori_frames_batch: list = []
+            bboxes_batch: list = []
+            crops_batch: list = []
+            valid_indices: list[int] = []
+
             for i, res_frame in enumerate(res_frame_list):
-                bbox = coord_list_cycle[i % len(coord_list_cycle)]
-                ori_frame = copy.deepcopy(frame_list_cycle[i % len(frame_list_cycle)])
+                bbox = coord_list_cycle[i % cycle_len]
+                ori_frame = frame_list_cycle[i % cycle_len]
                 x1, y1, x2, y2 = bbox
                 if self.version == "v15":
                     y2 = min(y2 + extra_margin, ori_frame.shape[0])
-                try:
-                    res_frame = cv2.resize(res_frame.astype(np.uint8), (x2 - x1, y2 - y1))
-                except Exception:  # noqa: BLE001
-                    continue
-                if self.version == "v15":
-                    combined = get_image(
-                        ori_frame, res_frame, [x1, y1, x2, y2],
-                        mode=parsing_mode, fp=self.face_parser,
-                    )
-                else:
-                    combined = get_image(
-                        ori_frame, res_frame, [x1, y1, x2, y2], fp=self.face_parser,
-                    )
+                ori_frames_batch.append(ori_frame)
+                bboxes_batch.append([x1, y1, x2, y2])
+                crops_batch.append(res_frame)
+                valid_indices.append(i)
+
+            blended_frames = gpu_blend_batch(
+                ori_frames_batch,
+                crops_batch,
+                bboxes_batch,
+                face_parser=self.face_parser,
+                parsing_mode=parsing_mode,
+                version=self.version,
+                extra_margin=0,          # already applied above
+                device=self._torch_device,
+            )
+
+            for i, combined in zip(valid_indices, blended_frames):
                 cv2.imwrite(str(frames_save_dir / f"{i:08d}.png"), combined)
 
         # Encode to MP4 + mux audio. Outside the lock — ffmpeg is CPU-bound,
