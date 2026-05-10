@@ -78,11 +78,18 @@ RUN chmod +x /entrypoint.sh
 RUN mkdir -p /app/src
 COPY app.py /app/src/app.py
 COPY worker.py /app/src/worker.py
+COPY trt_compile.py /app/src/trt_compile.py
 
 ENV PYTHONPATH=/app/src:/app/MuseTalk:/app
 ENV MUSETALK_REPO_DIR=/app/MuseTalk
 ENV MUSETALK_MODELS_DIR=/app/MuseTalk/models
 ENV MUSETALK_VERSION=v15
+
+# torch.compile config. Set MUSETALK_COMPILE=0 to disable. Backend "inductor"
+# is always available; "tensorrt" requires torch-tensorrt (not installed by
+# default — install in a separate image variant if pursuing).
+ENV MUSETALK_COMPILE=1
+ENV MUSETALK_COMPILE_BACKEND=inductor
 
 EXPOSE 8000
 
