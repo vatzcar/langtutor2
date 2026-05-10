@@ -98,7 +98,9 @@ def _blur_mask_gpu(
     sigma = 0.3 * ((ksize - 1) * 0.5 - 1) + 0.8  # OpenCV default sigma
     kernel = _gauss_kernel(ksize, sigma, _device_key(device))
 
-    t = torch.from_numpy(mask_np).to(device=device, dtype=torch.float32) / 255.0
+    # ascontiguousarray defends against negative-stride numpy views, which
+    # torch.from_numpy refuses. No-op when already contiguous.
+    t = torch.from_numpy(np.ascontiguousarray(mask_np)).to(device=device, dtype=torch.float32) / 255.0
     t = t.unsqueeze(0).unsqueeze(0)  # (1,1,H,W)
     pad = ksize // 2
     t_padded = F.pad(t, (pad, pad, pad, pad), mode="reflect")
@@ -183,6 +185,10 @@ def gpu_blend_batch(
         # ------------------------------------------------------------------
         try:
             pred_uint8 = res_frame_raw.astype(np.uint8) if res_frame_raw.dtype != np.uint8 else res_frame_raw
+            # torch.from_numpy refuses arrays with negative strides — VAE
+            # decode produces some such views. ascontiguousarray is a no-op
+            # when the array is already C-contiguous, otherwise it copies.
+            pred_uint8 = np.ascontiguousarray(pred_uint8)
             pred_t = (
                 torch.from_numpy(pred_uint8)
                 .to(device=device, dtype=torch.float32)

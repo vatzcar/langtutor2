@@ -217,6 +217,44 @@ def test_none_parser_returns_ori_copy():
 
 
 # ---------------------------------------------------------------------------
+# Test 6b — negative-stride numpy inputs (regression for late-frame skip)
+# ---------------------------------------------------------------------------
+
+def test_negative_stride_inputs_handled():
+    """A predicted-crop array with negative strides must not crash gpu_blend.
+
+    Regression test for the bug where torch.from_numpy refused arrays with
+    negative strides (produced by some VAE-decode views), causing every
+    frame in the affected range to fall through the resize-failed handler
+    and emerge with no lip-sync overlay.
+    """
+    h, w = 200, 200
+    source = _random_frame(h, w, seed=1)
+    bbox = [40, 40, 160, 160]
+
+    # Create a crop with negative strides via numpy reverse-slicing.
+    # arr[::-1] on a 3-D array produces a view with strides[0] < 0.
+    base_crop = _random_frame(80, 80, seed=2)
+    flipped_crop = base_crop[::-1]
+    assert any(s < 0 for s in flipped_crop.strides), \
+        "test setup invalid — flipped_crop should have a negative stride"
+
+    parser = FakeFaceParser()
+    results = gpu_blend_batch(
+        [source], [flipped_crop], [bbox], face_parser=parser, device=DEVICE,
+    )
+
+    assert len(results) == 1
+    out = results[0]
+    assert out.shape == source.shape
+    # The blend region must DIFFER from the source (i.e. blending actually ran,
+    # we did not silently fall through to "return ori_frame.copy()").
+    diff = np.abs(out.astype(int) - source.astype(int))
+    assert diff[40:160, 40:160].sum() > 0, \
+        "negative-stride input fell through to skip-blend path — bug regressed"
+
+
+# ---------------------------------------------------------------------------
 # Test 7 — CPU vs GPU output comparison (gold-standard)
 # ---------------------------------------------------------------------------
 
