@@ -33,7 +33,6 @@ import glob
 import hashlib
 import logging
 import os
-import subprocess
 import threading
 from pathlib import Path
 from typing import Optional
