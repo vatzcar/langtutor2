@@ -69,15 +69,34 @@ COPY requirements.txt /app/shim-requirements.txt
 RUN pip install -r /app/shim-requirements.txt
 
 # Shim code.
-COPY app.py /app/app.py
-COPY worker.py /app/worker.py
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-ENV PYTHONPATH=/app/MuseTalk:/app
+# /app/src is bind-mounted from the host during dev so code changes take
+# effect with a container restart (no image rebuild). These copies make the
+# image self-contained when no bind-mount is present.
+RUN mkdir -p /app/src
+COPY app.py /app/src/app.py
+COPY worker.py /app/src/worker.py
+COPY trt_compile.py /app/src/trt_compile.py
+COPY bench_pipeline.py /app/src/bench_pipeline.py
+
+ENV PYTHONPATH=/app/src:/app/MuseTalk:/app
 ENV MUSETALK_REPO_DIR=/app/MuseTalk
 ENV MUSETALK_MODELS_DIR=/app/MuseTalk/models
 ENV MUSETALK_VERSION=v15
+
+# torch.compile config. Set MUSETALK_COMPILE=0 to disable. Backend "inductor"
+# is always available; "tensorrt" requires torch-tensorrt (not installed by
+# default — install in a separate image variant if pursuing).
+ENV MUSETALK_COMPILE=1
+ENV MUSETALK_COMPILE_BACKEND=inductor
+
+# NVENC opt-in. Set MUSETALK_USE_NVENC=1 to use h264_nvenc instead of
+# libx264. Requires the container host to have ffmpeg built with NVENC
+# support (nvidia/cuda base images include it). Default 0 keeps libx264
+# so the image works on any GPU host without checking encoder availability.
+ENV MUSETALK_USE_NVENC=0
 
 EXPOSE 8000
 

@@ -73,6 +73,24 @@ docker compose -f docker-compose.ai.yml build avatar
    `hf-mirror.com` (China). The entrypoint patches it to `huggingface.co`
    before first run.
 
+## Dev iteration loop
+
+The server bind-mounts `services/ai/avatar/` into the container at `/app/src`
+(see `docker-compose.ai.yml` `volumes:` for the avatar service). This means
+you can iterate on `app.py` / `worker.py` without a full image rebuild:
+
+1. Edit locally.
+2. Rsync to server: `rsync -av services/ai/avatar/ user@<SERVER_IP>:~/langtutor/services/ai/avatar/`
+   (The current dev-server SSH target is in `CLAUDE.md` §4 — it changes on TensorDock instance restart.)
+3. Restart the container (no rebuild): `docker compose -f docker-compose.ai.yml restart avatar`
+4. Run tests: `docker exec langtutor-avatar pytest /app/src/test_*.py -v`
+
+Only rebuild the image when changing `Dockerfile`, `entrypoint.sh`, or
+`requirements.txt`.
+
+> Note: `entrypoint.sh` lives at `/entrypoint.sh` inside the image (not under `/app/src`), so
+> editing it on the host requires a full rebuild — the bind-mount only overrides files under `/app/src`.
+
 ## Testing
 
 ```bash

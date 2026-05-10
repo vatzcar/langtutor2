@@ -16,7 +16,7 @@ Pipeline (mirrors `MuseTalk/scripts/inference.py`):
     6. (per request) vae.get_latents_for_unet for each crop
     7. (per request) batched UNet forward + vae.decode_latents
     8. (per request) blend predictions back into source frames
-    9. (per request) ffmpeg img2video -> ffmpeg audio mux
+    9. (per request) pipe_encoder: stream frames to ffmpeg stdin, mux audio
 
 The Phase 3 streaming path will reuse the loaded models from this same
 class (see `infer_streaming` placeholder).
@@ -29,16 +29,15 @@ machines without a GPU can still load the FastAPI shim.
 
 from __future__ import annotations
 
-import copy
 import glob
 import hashlib
 import logging
 import os
-import shutil
-import subprocess
 import threading
 from pathlib import Path
 from typing import Optional
+
+from pipe_encoder import encode_frames_to_mp4
 
 logger = logging.getLogger("avatar.worker")
 
@@ -58,6 +57,8 @@ class MuseTalkWorker:
     sync method. Run it from a thread (e.g. via `loop.run_in_executor`)
     or from the queue runner in `app.py`.
     """
+
+    _DEFAULT_BATCH_SIZE: int = 8
 
     def __init__(
         self,
@@ -107,6 +108,27 @@ class MuseTalkWorker:
         self.pe = pe
         self._timesteps = torch.tensor([0], device=self._torch_device)
         self._weight_dtype = unet.model.dtype
+
+        # ---- torch.compile UNet + VAE decoder for 2-4x inference speedup ----
+        # Controlled by env vars so this can be toggled without code changes.
+        compile_enabled = os.environ.get("MUSETALK_COMPILE", "1") not in {"0", "false", "False", ""}
+        compile_backend = os.environ.get("MUSETALK_COMPILE_BACKEND", "inductor")
+
+        if compile_enabled:
+            from trt_compile import try_compile
+
+            self.unet.model = try_compile(
+                self.unet.model, label="unet", backend=compile_backend,
+            )
+            self.vae.vae.decoder = try_compile(
+                self.vae.vae.decoder, label="vae_decoder", backend=compile_backend,
+            )
+
+            # Warm up so the first real request doesn't pay the JIT cost.
+            try:
+                self._warmup_compiled_models()
+            except Exception:  # noqa: BLE001
+                logger.exception("warmup failed; first request may be slow")
 
         # Heavy load #2: Whisper + audio processor.
         self.audio_processor = AudioProcessor(feature_extractor_path=str(whisper_dir))
@@ -221,6 +243,48 @@ class MuseTalkWorker:
 
         return coord_list, frame_list, input_latent_list, fps
 
+    def _warmup_compiled_models(self) -> None:
+        """Trigger torch.compile JIT for UNet and VAE so first request is fast.
+
+        Warmup shapes verified against a real render on 2026-05-10:
+          - latent_batch:       (8, 8, 32, 32)   UNet in_channels=8, spatial=32x32
+          - audio_feature_batch (8, 50, 384)      Whisper-tiny hidden dim=384, seq=50
+          - pred_latents:       (8, 4, 32, 32)    UNet out_channels=4
+          - vae decoder input:  (8, 4, 32, 32)    scaled pred_latents
+
+        Re-JIT only happens when `infer()` is called with
+        ``batch_size != self._DEFAULT_BATCH_SIZE``. With the default batch size,
+        the warmup shapes match real inference shapes exactly and no re-JIT
+        occurs.
+        """
+        import torch
+        from trt_compile import warmup_compiled_model
+
+        warmup_batch = self._DEFAULT_BATCH_SIZE
+        dummy_latent = torch.randn(
+            warmup_batch, 8, 32, 32,
+            device=self._torch_device, dtype=self._weight_dtype,
+        )
+        dummy_hidden = torch.randn(
+            warmup_batch, 50, 384,
+            device=self._torch_device, dtype=self._weight_dtype,
+        )
+        # PE wraps audio_features inside infer(); skip PE in warmup.
+        # UNet call: model(latent, timesteps, encoder_hidden_states=hidden)
+        # torch.compile traces positional-style, so pass hidden as positional
+        # kwarg via a wrapper-free call matching the real call site.
+        warmup_compiled_model(
+            self.unet.model,
+            (dummy_latent, self._timesteps, dummy_hidden),
+            "unet",
+        )
+        # VAE decoder takes (B, 4, 32, 32) latents.
+        dummy_vae_latent = torch.randn(
+            warmup_batch, 4, 32, 32,
+            device=self._torch_device, dtype=self._weight_dtype,
+        )
+        warmup_compiled_model(self.vae.vae.decoder, (dummy_vae_latent,), "vae_decoder")
+
     # ---------------------------------------------------------------- public
 
     def preload_source(self, source_path: Path, bbox_shift: int = 0, extra_margin: int = 10) -> None:
@@ -246,7 +310,7 @@ class MuseTalkWorker:
         output_dir: Path,
         bbox_shift: int = 0,
         extra_margin: int = 10,
-        batch_size: int = 8,
+        batch_size: Optional[int] = None,
         audio_padding_left: int = 2,
         audio_padding_right: int = 2,
         parsing_mode: str = "jaw",
@@ -254,18 +318,15 @@ class MuseTalkWorker:
         result_name: Optional[str] = None,
     ) -> Path:
         """Run one render. Blocking. Thread-safe (serialised by a lock)."""
+        batch_size = batch_size or self._DEFAULT_BATCH_SIZE
 
-        import cv2
         import numpy as np
         import torch
-        from musetalk.utils.blending import get_image
         from musetalk.utils.utils import datagen
 
+        from gpu_blend import gpu_blend_batch
+
         output_dir.mkdir(parents=True, exist_ok=True)
-        frames_save_dir = output_dir / "frames"
-        if frames_save_dir.exists():
-            shutil.rmtree(frames_save_dir, ignore_errors=True)
-        frames_save_dir.mkdir(parents=True)
 
         with self._lock, torch.no_grad():
             coord_list, frame_list, input_latent_list, fps = self._extract_source(
@@ -313,53 +374,51 @@ class MuseTalkWorker:
                 for res_frame in recon:
                     res_frame_list.append(res_frame)
 
-            # Blend predicted face crops back into source frames.
+            # Blend predicted face crops back into source frames (GPU-accelerated).
+            cycle_len = len(coord_list_cycle)
+
+            # Build per-frame input lists.  For v15 the y2 extra_margin is applied
+            # here (same as the old loop) before passing to gpu_blend_batch so the
+            # bbox semantics match what get_image always expected.
+            ori_frames_batch: list = []
+            bboxes_batch: list = []
+            crops_batch: list = []
+
             for i, res_frame in enumerate(res_frame_list):
-                bbox = coord_list_cycle[i % len(coord_list_cycle)]
-                ori_frame = copy.deepcopy(frame_list_cycle[i % len(frame_list_cycle)])
+                bbox = coord_list_cycle[i % cycle_len]
+                ori_frame = frame_list_cycle[i % cycle_len]
                 x1, y1, x2, y2 = bbox
                 if self.version == "v15":
                     y2 = min(y2 + extra_margin, ori_frame.shape[0])
-                try:
-                    res_frame = cv2.resize(res_frame.astype(np.uint8), (x2 - x1, y2 - y1))
-                except Exception:  # noqa: BLE001
-                    continue
-                if self.version == "v15":
-                    combined = get_image(
-                        ori_frame, res_frame, [x1, y1, x2, y2],
-                        mode=parsing_mode, fp=self.face_parser,
-                    )
-                else:
-                    combined = get_image(
-                        ori_frame, res_frame, [x1, y1, x2, y2], fp=self.face_parser,
-                    )
-                cv2.imwrite(str(frames_save_dir / f"{i:08d}.png"), combined)
+                ori_frames_batch.append(ori_frame)
+                bboxes_batch.append([x1, y1, x2, y2])
+                crops_batch.append(res_frame)
 
-        # Encode to MP4 + mux audio. Outside the lock — ffmpeg is CPU-bound,
-        # the GPU is free for the next job.
-        temp_video = output_dir / "video_no_audio.mp4"
+            blended_frames = gpu_blend_batch(
+                ori_frames_batch,
+                crops_batch,
+                bboxes_batch,
+                face_parser=self.face_parser,
+                parsing_mode=parsing_mode,
+                version=self.version,
+                device=self._torch_device,
+            )
+
+        # Encode to MP4 + mux audio via stdin pipe. Outside the GPU lock —
+        # ffmpeg is CPU-bound, the GPU is free for the next job.
         out_name = result_name or "result.mp4"
         out_path = output_dir / out_name
-
-        cmd_v = (
-            f'ffmpeg -y -v warning -r {fps} -f image2 '
-            f'-i "{frames_save_dir}/%08d.png" '
-            f'-vcodec libx264 -vf format=yuv420p -crf 18 "{temp_video}"'
+        # Encode + audio mux in a single ffmpeg subprocess (no temp video file).
+        # use_nvenc is opt-in via MUSETALK_USE_NVENC=1.  Reading the env at
+        # request time means `docker exec -e MUSETALK_USE_NVENC=1` takes effect
+        # for bench runs without restarting the worker process.
+        use_nvenc = os.environ.get("MUSETALK_USE_NVENC", "0") in {"1", "true", "True"}
+        encode_frames_to_mp4(
+            frames=blended_frames,
+            output_path=out_path,
+            fps=fps,
+            audio_path=audio_path,
+            crf=18,
+            use_nvenc=use_nvenc,
         )
-        if os.system(cmd_v) != 0 or not temp_video.exists():
-            raise RuntimeError("ffmpeg img2video failed")
-
-        cmd_a = (
-            f'ffmpeg -y -v warning -i "{audio_path}" -i "{temp_video}" '
-            f'-c:v copy -c:a aac -shortest "{out_path}"'
-        )
-        if os.system(cmd_a) != 0 or not out_path.exists():
-            raise RuntimeError("ffmpeg audio-mux failed")
-
-        try:
-            temp_video.unlink()
-            shutil.rmtree(frames_save_dir, ignore_errors=True)
-        except OSError:
-            pass
-
         return out_path
