@@ -33,7 +33,6 @@ import glob
 import hashlib
 import logging
 import os
-import shutil
 import subprocess
 import threading
 from pathlib import Path
@@ -254,7 +253,6 @@ class MuseTalkWorker:
     ) -> Path:
         """Run one render. Blocking. Thread-safe (serialised by a lock)."""
 
-        import cv2
         import numpy as np
         import torch
         from musetalk.utils.utils import datagen
@@ -262,10 +260,6 @@ class MuseTalkWorker:
         from gpu_blend import gpu_blend_batch
 
         output_dir.mkdir(parents=True, exist_ok=True)
-        frames_save_dir = output_dir / "frames"
-        if frames_save_dir.exists():
-            shutil.rmtree(frames_save_dir, ignore_errors=True)
-        frames_save_dir.mkdir(parents=True)
 
         with self._lock, torch.no_grad():
             coord_list, frame_list, input_latent_list, fps = self._extract_source(
@@ -343,34 +337,17 @@ class MuseTalkWorker:
                 device=self._torch_device,
             )
 
-            for i, combined in enumerate(blended_frames):
-                cv2.imwrite(str(frames_save_dir / f"{i:08d}.png"), combined)
-
-        # Encode to MP4 + mux audio. Outside the lock — ffmpeg is CPU-bound,
-        # the GPU is free for the next job.
-        temp_video = output_dir / "video_no_audio.mp4"
+        # Encode to MP4 + mux audio via stdin pipe. Outside the GPU lock —
+        # ffmpeg is CPU-bound, the GPU is free for the next job.
         out_name = result_name or "result.mp4"
         out_path = output_dir / out_name
-
-        cmd_v = (
-            f'ffmpeg -y -v warning -r {fps} -f image2 '
-            f'-i "{frames_save_dir}/%08d.png" '
-            f'-vcodec libx264 -vf format=yuv420p -crf 18 "{temp_video}"'
+        from pipe_encoder import encode_frames_to_mp4
+        encode_frames_to_mp4(
+            frames=blended_frames,
+            output_path=out_path,
+            fps=fps,
+            audio_path=audio_path,
+            crf=18,
+            use_nvenc=False,  # Task 4 may flip this
         )
-        if os.system(cmd_v) != 0 or not temp_video.exists():
-            raise RuntimeError("ffmpeg img2video failed")
-
-        cmd_a = (
-            f'ffmpeg -y -v warning -i "{audio_path}" -i "{temp_video}" '
-            f'-c:v copy -c:a aac -shortest "{out_path}"'
-        )
-        if os.system(cmd_a) != 0 or not out_path.exists():
-            raise RuntimeError("ffmpeg audio-mux failed")
-
-        try:
-            temp_video.unlink()
-            shutil.rmtree(frames_save_dir, ignore_errors=True)
-        except OSError:
-            pass
-
         return out_path
