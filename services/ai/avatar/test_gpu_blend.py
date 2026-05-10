@@ -228,8 +228,20 @@ def test_cpu_gpu_parity():
     Compare gpu_blend_batch output against MuseTalk's reference get_image().
     Mean per-pixel L1 difference must be < 5/255 (i.e. < 5 on 0-255 scale).
     """
+    import os
     from musetalk.utils.blending import get_image
     from musetalk.utils.face_parsing import FaceParsing
+
+    # FaceParsing.__init__ resolves model weights relative to CWD.
+    # The worker always chdir()s to /app/MuseTalk before constructing it.
+    # Replicate that here so the test is self-contained.
+    musetalk_dir = "/app/MuseTalk"
+    old_cwd = os.getcwd()
+    os.chdir(musetalk_dir)
+    try:
+        fp = FaceParsing()
+    finally:
+        os.chdir(old_cwd)
 
     # Small synthetic input to keep test fast
     h, w = 320, 240
@@ -239,8 +251,6 @@ def test_cpu_gpu_parity():
     x1, y1, x2, y2 = bbox
     # Create a predicted crop that is obviously different from source
     res_frame = rng.integers(0, 256, (y2 - y1, x2 - x1, 3), dtype=np.uint8)
-
-    fp = FaceParsing()
 
     # --- CPU reference ---
     # Worker applies extra_margin before calling get_image (v15 path):
