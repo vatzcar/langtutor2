@@ -89,7 +89,8 @@ def warmup_compiled_model(
     Args:
         model: A compiled (or plain) nn.Module.
         sample_input: Tuple of positional arguments to pass to model.forward().
-            Shapes must exactly match real inference shapes — any mismatch will
+            Shapes should exactly match real inference shapes (otherwise PyTorch
+            will re-JIT on the first real call, paying ~30s) — any mismatch will
             cause torch.compile to re-JIT at inference time.
         label: Human-readable name for log messages.
     """

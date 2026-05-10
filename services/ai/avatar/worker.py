@@ -58,6 +58,8 @@ class MuseTalkWorker:
     or from the queue runner in `app.py`.
     """
 
+    _DEFAULT_BATCH_SIZE: int = 8
+
     def __init__(
         self,
         unet_model_path: Path,
@@ -113,7 +115,7 @@ class MuseTalkWorker:
         compile_backend = os.environ.get("MUSETALK_COMPILE_BACKEND", "inductor")
 
         if compile_enabled:
-            from trt_compile import try_compile, warmup_compiled_model  # noqa: F401
+            from trt_compile import try_compile
 
             self.unet.model = try_compile(
                 self.unet.model, label="unet", backend=compile_backend,
@@ -241,8 +243,6 @@ class MuseTalkWorker:
 
         return coord_list, frame_list, input_latent_list, fps
 
-    # ---------------------------------------------------------------- public
-
     def _warmup_compiled_models(self) -> None:
         """Trigger torch.compile JIT for UNet and VAE so first request is fast.
 
@@ -252,13 +252,15 @@ class MuseTalkWorker:
           - pred_latents:       (8, 4, 32, 32)    UNet out_channels=4
           - vae decoder input:  (8, 4, 32, 32)    scaled pred_latents
 
-        If warmup shapes diverge from real shapes, torch.compile will re-JIT
-        on the first real request (first request slow, subsequent fast).
+        Re-JIT only happens when `infer()` is called with
+        ``batch_size != self._DEFAULT_BATCH_SIZE``. With the default batch size,
+        the warmup shapes match real inference shapes exactly and no re-JIT
+        occurs.
         """
         import torch
         from trt_compile import warmup_compiled_model
 
-        warmup_batch = 8  # match default batch_size in infer()
+        warmup_batch = self._DEFAULT_BATCH_SIZE
         dummy_latent = torch.randn(
             warmup_batch, 8, 32, 32,
             device=self._torch_device, dtype=self._weight_dtype,
@@ -283,6 +285,8 @@ class MuseTalkWorker:
         )
         warmup_compiled_model(self.vae.vae.decoder, (dummy_vae_latent,), "vae_decoder")
 
+    # ---------------------------------------------------------------- public
+
     def preload_source(self, source_path: Path, bbox_shift: int = 0, extra_margin: int = 10) -> None:
         """Warm the source-frame / bbox / latent cache for a known idle-loop.
 
@@ -306,7 +310,7 @@ class MuseTalkWorker:
         output_dir: Path,
         bbox_shift: int = 0,
         extra_margin: int = 10,
-        batch_size: int = 8,
+        batch_size: Optional[int] = None,
         audio_padding_left: int = 2,
         audio_padding_right: int = 2,
         parsing_mode: str = "jaw",
@@ -314,6 +318,7 @@ class MuseTalkWorker:
         result_name: Optional[str] = None,
     ) -> Path:
         """Run one render. Blocking. Thread-safe (serialised by a lock)."""
+        batch_size = batch_size or self._DEFAULT_BATCH_SIZE
 
         import numpy as np
         import torch
@@ -360,10 +365,6 @@ class MuseTalkWorker:
             for whisper_batch, latent_batch in gen:
                 audio_feature_batch = self.pe(whisper_batch)
                 latent_batch = latent_batch.to(dtype=self._weight_dtype)
-                logger.debug(
-                    "UNet shapes: latent=%s, hidden=%s, timesteps=%s",
-                    latent_batch.shape, audio_feature_batch.shape, self._timesteps.shape,
-                )
                 pred_latents = self.unet.model(
                     latent_batch,
                     self._timesteps,
