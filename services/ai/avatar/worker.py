@@ -314,7 +314,6 @@ class MuseTalkWorker:
                     res_frame_list.append(res_frame)
 
             # Blend predicted face crops back into source frames (GPU-accelerated).
-            n = len(res_frame_list)
             cycle_len = len(coord_list_cycle)
 
             # Build per-frame input lists.  For v15 the y2 extra_margin is applied
@@ -323,7 +322,6 @@ class MuseTalkWorker:
             ori_frames_batch: list = []
             bboxes_batch: list = []
             crops_batch: list = []
-            valid_indices: list[int] = []
 
             for i, res_frame in enumerate(res_frame_list):
                 bbox = coord_list_cycle[i % cycle_len]
@@ -334,7 +332,6 @@ class MuseTalkWorker:
                 ori_frames_batch.append(ori_frame)
                 bboxes_batch.append([x1, y1, x2, y2])
                 crops_batch.append(res_frame)
-                valid_indices.append(i)
 
             blended_frames = gpu_blend_batch(
                 ori_frames_batch,
@@ -343,11 +340,10 @@ class MuseTalkWorker:
                 face_parser=self.face_parser,
                 parsing_mode=parsing_mode,
                 version=self.version,
-                extra_margin=0,          # already applied above
                 device=self._torch_device,
             )
 
-            for i, combined in zip(valid_indices, blended_frames):
+            for i, combined in enumerate(blended_frames):
                 cv2.imwrite(str(frames_save_dir / f"{i:08d}.png"), combined)
 
         # Encode to MP4 + mux audio. Outside the lock — ffmpeg is CPU-bound,

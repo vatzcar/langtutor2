@@ -57,6 +57,19 @@ logger = logging.getLogger("avatar.gpu_blend")
 # Gaussian kernel factory (cached by size/sigma/device)
 # ---------------------------------------------------------------------------
 
+def _device_key(d: torch.device) -> str:
+    """Normalise a torch.device to a canonical string for use as a cache key.
+
+    ``torch.device("cuda")`` and ``torch.device("cuda:0")`` are functionally
+    identical on single-GPU but produce different ``str()`` representations.
+    This helper maps both to ``"cuda:0"`` so the LRU cache hits correctly.
+    """
+    if d.type == "cuda":
+        idx = d.index if d.index is not None else 0
+        return f"cuda:{idx}"
+    return d.type
+
+
 @lru_cache(maxsize=32)
 def _gauss_kernel(
     ksize: int,
@@ -83,7 +96,7 @@ def _blur_mask_gpu(
     if ksize % 2 == 0:
         ksize += 1
     sigma = 0.3 * ((ksize - 1) * 0.5 - 1) + 0.8  # OpenCV default sigma
-    kernel = _gauss_kernel(ksize, sigma, str(device))
+    kernel = _gauss_kernel(ksize, sigma, _device_key(device))
 
     t = torch.from_numpy(mask_np).to(device=device, dtype=torch.float32) / 255.0
     t = t.unsqueeze(0).unsqueeze(0)  # (1,1,H,W)
@@ -120,7 +133,6 @@ def gpu_blend_batch(
     face_parser,
     parsing_mode: str = "jaw",
     version: str = "v15",
-    extra_margin: int = 10,
     device: torch.device = torch.device("cuda"),
     upper_boundary_ratio: float = 0.5,
     expand: float = 1.5,
@@ -139,7 +151,6 @@ def gpu_blend_batch(
         face_parser:   MuseTalk FaceParsing instance.
         parsing_mode:  "jaw" | "neck" | "raw" — forwarded to face_parser.
         version:       "v15" or other.  Passed through; bbox is caller's responsibility.
-        extra_margin:  Informational only (y2 expansion already applied by caller).
         device:        Torch device for GPU ops.
         upper_boundary_ratio: Fraction of crop height to zero-mask at top (0.5).
         expand:        Crop expansion factor matching get_crop_box (1.5).

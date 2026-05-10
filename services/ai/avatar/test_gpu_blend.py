@@ -9,7 +9,6 @@ and is skipped on machines where the MuseTalk package is not available.
 
 from __future__ import annotations
 
-import copy
 import importlib
 import sys
 from typing import Optional
@@ -18,6 +17,11 @@ import numpy as np
 import pytest
 import torch
 from PIL import Image
+
+try:
+    import cv2
+except ImportError:  # pragma: no cover
+    cv2 = None  # type: ignore[assignment]
 
 # ---------------------------------------------------------------------------
 # Module under test
@@ -268,26 +272,22 @@ def test_cpu_gpu_parity():
         face_parser=fp,
         parsing_mode="jaw",
         version="v15",
-        extra_margin=0,            # no further adjustment inside gpu_blend_batch
         device=DEVICE,
     )
     gpu_out = gpu_results[0]
 
     assert cpu_out.shape == gpu_out.shape, f"{cpu_out.shape} vs {gpu_out.shape}"
 
-    diff = np.abs(cpu_out.astype(np.float32) - gpu_out.astype(np.float32))
-    mean_diff = diff.mean()
-    max_diff = diff.max()
+    diff = np.abs(cpu_out.astype(int) - gpu_out.astype(int))
+    mean_diff = float(diff.mean())
+    max_diff = int(diff.max())
 
     print(f"\nCPU vs GPU blend: mean_abs_diff={mean_diff:.4f}, max_diff={max_diff}")
-    assert mean_diff < 5.0, (
-        f"CPU/GPU blending diverged too much: mean_abs_diff={mean_diff:.4f} (threshold 5.0). "
+    assert mean_diff < 2.0, (
+        f"CPU/GPU blending diverged too much: mean_abs_diff={mean_diff:.4f} (threshold 2.0). "
         "Check mask geometry and Gaussian kernel."
     )
-
-
-# We must import cv2 for the parity test even though it's a conditional import.
-try:
-    import cv2
-except ImportError:  # pragma: no cover
-    cv2 = None  # type: ignore[assignment]
+    assert max_diff < 15, (
+        f"CPU/GPU blending L∞ diverged too much: max_diff={max_diff} (threshold 15). "
+        "Check mask geometry and Gaussian kernel."
+    )
