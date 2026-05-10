@@ -409,15 +409,16 @@ class MuseTalkWorker:
         out_name = result_name or "result.mp4"
         out_path = output_dir / out_name
         # Encode + audio mux in a single ffmpeg subprocess (no temp video file).
-        # pipe_encoder defaults to libx264 -preset ultrafast: tutor sessions are
-        # encode-time-sensitive, and the size penalty (~40% over -preset medium)
-        # is acceptable on the dev backend. Task 4 may flip use_nvenc=True.
+        # use_nvenc is opt-in via MUSETALK_USE_NVENC=1.  Reading the env at
+        # request time means `docker exec -e MUSETALK_USE_NVENC=1` takes effect
+        # for bench runs without restarting the worker process.
+        use_nvenc = os.environ.get("MUSETALK_USE_NVENC", "0") in {"1", "true", "True"}
         encode_frames_to_mp4(
             frames=blended_frames,
             output_path=out_path,
             fps=fps,
             audio_path=audio_path,
             crf=18,
-            use_nvenc=False,  # Task 4 may flip this
+            use_nvenc=use_nvenc,
         )
         return out_path

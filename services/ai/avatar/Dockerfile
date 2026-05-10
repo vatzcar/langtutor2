@@ -79,6 +79,7 @@ RUN mkdir -p /app/src
 COPY app.py /app/src/app.py
 COPY worker.py /app/src/worker.py
 COPY trt_compile.py /app/src/trt_compile.py
+COPY bench_pipeline.py /app/src/bench_pipeline.py
 
 ENV PYTHONPATH=/app/src:/app/MuseTalk:/app
 ENV MUSETALK_REPO_DIR=/app/MuseTalk
@@ -90,6 +91,12 @@ ENV MUSETALK_VERSION=v15
 # default — install in a separate image variant if pursuing).
 ENV MUSETALK_COMPILE=1
 ENV MUSETALK_COMPILE_BACKEND=inductor
+
+# NVENC opt-in. Set MUSETALK_USE_NVENC=1 to use h264_nvenc instead of
+# libx264. Requires the container host to have ffmpeg built with NVENC
+# support (nvidia/cuda base images include it). Default 0 keeps libx264
+# so the image works on any GPU host without checking encoder availability.
+ENV MUSETALK_USE_NVENC=0
 
 EXPOSE 8000
 
