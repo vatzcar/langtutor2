@@ -114,6 +114,11 @@ def encode_frames_to_mp4(
         + [str(output_path)]
     )
 
+    # Concatenate all frame bytes into one buffer, then feed via communicate().
+    # This avoids the "flush of closed file" error that arises when manually
+    # closing stdin before calling communicate() on Python 3.10.
+    raw_input = b"".join(frame.tobytes() for frame in frames)
+
     proc = subprocess.Popen(
         cmd,
         stdin=subprocess.PIPE,
@@ -121,13 +126,7 @@ def encode_frames_to_mp4(
         stderr=subprocess.PIPE,
     )
 
-    # Stream raw frame bytes to ffmpeg stdin.
-    assert proc.stdin is not None
-    for frame in frames:
-        proc.stdin.write(frame.tobytes())
-    proc.stdin.close()
-
-    _, stderr_bytes = proc.communicate()
+    _, stderr_bytes = proc.communicate(input=raw_input)
     rc = proc.returncode
 
     if rc != 0:
